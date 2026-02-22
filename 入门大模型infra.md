@@ -91,3 +91,96 @@ if __name__ == "__main__":
 - 实现 “边计算边通信”（计算-通信重叠）
 
 # nano-vllm
+## Prefill /Decode/KV Cache
+- **KV Cache**:
+没有KV Cache时如何计算Transformer:
+    <details>
+    <summary>Python代码</summary>
+
+    Step1
+    ```Python
+    # 输入序列
+    X₁ = [P₁, P₂, P₃]  # 3个token
+    # 计算 QKV（3个token都要算）
+    Q₁ = X₁ @ Wq  # [3, d]
+    K₁ = X₁ @ Wk  # [3, d]  ← 计算了P₁,P₂,P₃的K
+    V₁ = X₁ @ Wv  # [3, d]  ← 计算了P₁,P₂,P₃的V
+    # Attention
+    attn = softmax(Q₁ @ K₁.T / √d)  # [3, 3]
+    output = attn @ V₁
+    # 取最后一个token作为输出
+    O₁ = output[-1]
+    ```
+    Step2:
+    ```Python
+    # 输入序列（变长了）
+    X₂ = [P₁, P₂, P₃, O₁]  # 4个token
+    # 计算 QKV（4个token都要算，包括重复的P!）
+    Q₂ = X₂ @ Wq  # [4, d]
+    K₂ = X₂ @ Wk  # [4, d]  ← 又计算了P₁,P₂,P₃的K！浪费！
+    V₂ = X₂ @ Wv  # [4, d]  ← 又计算了P₁,P₂,P₃的V！浪费！
+    # Attention
+    attn = softmax(Q₂ @ K₂.T / √d)  # [4, 4]
+    output = attn @ V₂
+    O₂ = output[-1]
+    ```
+    </details>
+
+    有KV Cache时如何计算Transformer:
+    <details>
+    <summary>Python代码</summary>
+
+    Prefill 阶段（构建缓存）
+    ```Python
+    import math
+        # 输入: [P₁, P₂, P₃, ..., Pₙ]  n个prompt token
+        # 对每一层 Transformer:
+        for layer in layers:
+            # 并行计算所有token的QKV
+            Q = X @ Wq  # [n, d]
+            K = X @ Wk  # [n, d]  ← 缓存
+            V = X @ Wv  # [n, d]  ← 缓存
+            # 存储到KV Cache
+            kv_cache[layer] = {
+                'K': K,  # [n, d]
+                'V': V   # [n, d]
+            }
+            # 计算Attention输出
+            output = softmax(Q @ K.T / math.sqrt(d)) @ V
+    ```
+     Decode 阶段（复用缓存）
+    ```Python
+    import math
+        # 生成第1个token O₁:
+    new_token = O₁
+    for layer in layers:
+        # 只计算新token的QKV
+        q = new_token @ Wq  # [1, d]
+        k = new_token @ Wk  # [1, d]
+        v = new_token @ Wv  # [1, d]
+        
+        # 追加到缓存
+        kv_cache[layer]['K'] = concat(kv_cache[layer]['K'], k)  # [n+1, d]
+        kv_cache[layer]['V'] = concat(kv_cache[layer]['V'], v)  # [n+1, d]
+        
+        # Attention: Q只查询，KV用缓存
+        output = softmax(q @ K_cache.T / math.sqrt(d)) @ V_cache
+    ```
+- 为什么Q不需要缓存:
+    Q是当前token的查询向量。K是所有token的键向量。V是所有token的值向量。Q用完即弃，历史Q不会再被使用，缓存没有意义。
+
+- 总推理时间 = Prefill 时间 + Decode 时间 × 生成 token 数
+- 短 Prompt + 长回复：Decode 主导耗时
+- 长 Prompt + 短回复：Prefill 主导耗时
+┌─────────────────────────────────────────┐
+│           Prefill 阶段                   │
+│  输入: ["请", "解释", "Transformer"]     │
+│        ↓ 并行计算                        │
+│  输出: KV Cache + 第一个生成 token       │
+└─────────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│           Decode 阶段                    │
+│  输入: token₁ → token₂ → token₃ → ...   │
+│        ↓ 串行迭代                        │
+│  输出: 完整回复内容                      │
+└─────────────────────────────────────────┘
