@@ -1,0 +1,226 @@
+<!DOCTYPE html><html><head>
+      <title>入门大模型infra</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      
+      <link rel="stylesheet" href="file:////Users/fiera/.vscode/extensions/shd101wyy.markdown-preview-enhanced-0.8.20/crossnote/dependencies/katex/katex.min.css">
+      
+      
+      
+      
+      
+      <style>
+      code[class*=language-],pre[class*=language-]{color:#333;background:0 0;font-family:Consolas,"Liberation Mono",Menlo,Courier,monospace;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;word-wrap:normal;line-height:1.4;-moz-tab-size:8;-o-tab-size:8;tab-size:8;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}pre[class*=language-]{padding:.8em;overflow:auto;border-radius:3px;background:#f5f5f5}:not(pre)>code[class*=language-]{padding:.1em;border-radius:.3em;white-space:normal;background:#f5f5f5}.token.blockquote,.token.comment{color:#969896}.token.cdata{color:#183691}.token.doctype,.token.macro.property,.token.punctuation,.token.variable{color:#333}.token.builtin,.token.important,.token.keyword,.token.operator,.token.rule{color:#a71d5d}.token.attr-value,.token.regex,.token.string,.token.url{color:#183691}.token.atrule,.token.boolean,.token.code,.token.command,.token.constant,.token.entity,.token.number,.token.property,.token.symbol{color:#0086b3}.token.prolog,.token.selector,.token.tag{color:#63a35c}.token.attr-name,.token.class,.token.class-name,.token.function,.token.id,.token.namespace,.token.pseudo-class,.token.pseudo-element,.token.url-reference .token.variable{color:#795da3}.token.entity{cursor:help}.token.title,.token.title .token.punctuation{font-weight:700;color:#1d3e81}.token.list{color:#ed6a43}.token.inserted{background-color:#eaffea;color:#55a532}.token.deleted{background-color:#ffecec;color:#bd2c00}.token.bold{font-weight:700}.token.italic{font-style:italic}.language-json .token.property{color:#183691}.language-markup .token.tag .token.punctuation{color:#333}.language-css .token.function,code.language-css{color:#0086b3}.language-yaml .token.atrule{color:#63a35c}code.language-yaml{color:#183691}.language-ruby .token.function{color:#333}.language-markdown .token.url{color:#795da3}.language-makefile .token.symbol{color:#795da3}.language-makefile .token.variable{color:#183691}.language-makefile .token.builtin{color:#0086b3}.language-bash .token.keyword{color:#0086b3}pre[data-line]{position:relative;padding:1em 0 1em 3em}pre[data-line] .line-highlight-wrapper{position:absolute;top:0;left:0;background-color:transparent;display:block;width:100%}pre[data-line] .line-highlight{position:absolute;left:0;right:0;padding:inherit 0;margin-top:1em;background:hsla(24,20%,50%,.08);background:linear-gradient(to right,hsla(24,20%,50%,.1) 70%,hsla(24,20%,50%,0));pointer-events:none;line-height:inherit;white-space:pre}pre[data-line] .line-highlight:before,pre[data-line] .line-highlight[data-end]:after{content:attr(data-start);position:absolute;top:.4em;left:.6em;min-width:1em;padding:0 .5em;background-color:hsla(24,20%,50%,.4);color:#f4f1ef;font:bold 65%/1.5 sans-serif;text-align:center;vertical-align:.3em;border-radius:999px;text-shadow:none;box-shadow:0 1px #fff}pre[data-line] .line-highlight[data-end]:after{content:attr(data-end);top:auto;bottom:.4em}html body{font-family:'Helvetica Neue',Helvetica,'Segoe UI',Arial,freesans,sans-serif;font-size:16px;line-height:1.6;color:#333;background-color:#fff;overflow:initial;box-sizing:border-box;word-wrap:break-word}html body>:first-child{margin-top:0}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{line-height:1.2;margin-top:1em;margin-bottom:16px;color:#000}html body h1{font-size:2.25em;font-weight:300;padding-bottom:.3em}html body h2{font-size:1.75em;font-weight:400;padding-bottom:.3em}html body h3{font-size:1.5em;font-weight:500}html body h4{font-size:1.25em;font-weight:600}html body h5{font-size:1.1em;font-weight:600}html body h6{font-size:1em;font-weight:600}html body h1,html body h2,html body h3,html body h4,html body h5{font-weight:600}html body h5{font-size:1em}html body h6{color:#5c5c5c}html body strong{color:#000}html body del{color:#5c5c5c}html body a:not([href]){color:inherit;text-decoration:none}html body a{color:#08c;text-decoration:none}html body a:hover{color:#00a3f5;text-decoration:none}html body img{max-width:100%}html body>p{margin-top:0;margin-bottom:16px;word-wrap:break-word}html body>ol,html body>ul{margin-bottom:16px}html body ol,html body ul{padding-left:2em}html body ol.no-list,html body ul.no-list{padding:0;list-style-type:none}html body ol ol,html body ol ul,html body ul ol,html body ul ul{margin-top:0;margin-bottom:0}html body li{margin-bottom:0}html body li.task-list-item{list-style:none}html body li>p{margin-top:0;margin-bottom:0}html body .task-list-item-checkbox{margin:0 .2em .25em -1.8em;vertical-align:middle}html body .task-list-item-checkbox:hover{cursor:pointer}html body blockquote{margin:16px 0;font-size:inherit;padding:0 15px;color:#5c5c5c;background-color:#f0f0f0;border-left:4px solid #d6d6d6}html body blockquote>:first-child{margin-top:0}html body blockquote>:last-child{margin-bottom:0}html body hr{height:4px;margin:32px 0;background-color:#d6d6d6;border:0 none}html body table{margin:10px 0 15px 0;border-collapse:collapse;border-spacing:0;display:block;width:100%;overflow:auto;word-break:normal;word-break:keep-all}html body table th{font-weight:700;color:#000}html body table td,html body table th{border:1px solid #d6d6d6;padding:6px 13px}html body dl{padding:0}html body dl dt{padding:0;margin-top:16px;font-size:1em;font-style:italic;font-weight:700}html body dl dd{padding:0 16px;margin-bottom:16px}html body code{font-family:Menlo,Monaco,Consolas,'Courier New',monospace;font-size:.85em;color:#000;background-color:#f0f0f0;border-radius:3px;padding:.2em 0}html body code::after,html body code::before{letter-spacing:-.2em;content:'\00a0'}html body pre>code{padding:0;margin:0;word-break:normal;white-space:pre;background:0 0;border:0}html body .highlight{margin-bottom:16px}html body .highlight pre,html body pre{padding:1em;overflow:auto;line-height:1.45;border:#d6d6d6;border-radius:3px}html body .highlight pre{margin-bottom:0;word-break:normal}html body pre code,html body pre tt{display:inline;max-width:initial;padding:0;margin:0;overflow:initial;line-height:inherit;word-wrap:normal;background-color:transparent;border:0}html body pre code:after,html body pre code:before,html body pre tt:after,html body pre tt:before{content:normal}html body blockquote,html body dl,html body ol,html body p,html body pre,html body ul{margin-top:0;margin-bottom:16px}html body kbd{color:#000;border:1px solid #d6d6d6;border-bottom:2px solid #c7c7c7;padding:2px 4px;background-color:#f0f0f0;border-radius:3px}@media print{html body{background-color:#fff}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{color:#000;page-break-after:avoid}html body blockquote{color:#5c5c5c}html body pre{page-break-inside:avoid}html body table{display:table}html body img{display:block;max-width:100%;max-height:100%}html body code,html body pre{word-wrap:break-word;white-space:pre}}.markdown-preview{width:100%;height:100%;box-sizing:border-box}.markdown-preview ul{list-style:disc}.markdown-preview ul ul{list-style:circle}.markdown-preview ul ul ul{list-style:square}.markdown-preview ol{list-style:decimal}.markdown-preview ol ol,.markdown-preview ul ol{list-style-type:lower-roman}.markdown-preview ol ol ol,.markdown-preview ol ul ol,.markdown-preview ul ol ol,.markdown-preview ul ul ol{list-style-type:lower-alpha}.markdown-preview .newpage,.markdown-preview .pagebreak{page-break-before:always}.markdown-preview pre.line-numbers{position:relative;padding-left:3.8em;counter-reset:linenumber}.markdown-preview pre.line-numbers>code{position:relative}.markdown-preview pre.line-numbers .line-numbers-rows{position:absolute;pointer-events:none;top:1em;font-size:100%;left:0;width:3em;letter-spacing:-1px;border-right:1px solid #999;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none}.markdown-preview pre.line-numbers .line-numbers-rows>span{pointer-events:none;display:block;counter-increment:linenumber}.markdown-preview pre.line-numbers .line-numbers-rows>span:before{content:counter(linenumber);color:#999;display:block;padding-right:.8em;text-align:right}.markdown-preview .mathjax-exps .MathJax_Display{text-align:center!important}.markdown-preview:not([data-for=preview]) .code-chunk .code-chunk-btn-group{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .status{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .output-div{margin-bottom:16px}.markdown-preview .md-toc{padding:0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link div,.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}.markdown-preview .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}.scrollbar-style::-webkit-scrollbar{width:8px}.scrollbar-style::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}.scrollbar-style::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode]){position:relative;width:100%;height:100%;top:0;left:0;margin:0;padding:0;overflow:auto}html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{position:relative;top:0;min-height:100vh}@media screen and (min-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em calc(50% - 457px + 2em)}}@media screen and (max-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{font-size:14px!important;padding:1em}}@media print{html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{display:none}}html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{position:fixed;bottom:8px;left:8px;font-size:28px;cursor:pointer;color:inherit;z-index:99;width:32px;text-align:center;opacity:.4}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] #sidebar-toc-btn{opacity:1}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc{position:fixed;top:0;left:0;width:300px;height:100%;padding:32px 0 48px 0;font-size:14px;box-shadow:0 0 4px rgba(150,150,150,.33);box-sizing:border-box;overflow:auto;background-color:inherit}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar{width:8px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc a{text-decoration:none}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc{padding:0 16px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link div,html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{left:300px;width:calc(100% - 300px);padding:2em calc(50% - 457px - 300px / 2);margin:0;box-sizing:border-box}@media screen and (max-width:1274px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{width:100%}}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .markdown-preview{left:50%;transform:translateX(-50%)}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .md-sidebar-toc{display:none}
+/* Please visit the URL below for more information: */
+/*   https://shd101wyy.github.io/markdown-preview-enhanced/#/customize-css */
+
+      </style>
+      <!-- The content below will be included at the end of the <head> element. --><script type="text/javascript">
+  document.addEventListener("DOMContentLoaded", function () {
+    // your code here
+  });
+</script></head><body for="html-export">
+    
+    
+      <div class="crossnote markdown-preview  ">
+      
+<h1 id="picotron">Picotron </h1>
+<h2 id="数据并行">数据并行 </h2>
+<p>数据并行分为DP（Data Parallel）、DDP （Distributed Data Parallel）和 FSDP（Fully Sharded Data Parallel）</p>
+<ul>
+<li>DP:一个老板（主进程）管多个员工（GPU），所有员工的工作内容、参数都一样，老板统一分发任务、收集结果、更新参数</li>
+<li>DDP:多机多卡 / 单机多卡场景下，每个 GPU 对应一个独立进程，每个进程都持有完整的模型参数。通过 NCCL 通信库实现梯度的高效同步（Ring AllReduce 算法），每个进程独立更新参数（因为梯度同步后参数一致）</li>
+<li>基于 DDP 改进，解决大模型显存不足问题。将模型参数、梯度、优化器状态都 “分片”（Shard）到不同的 GPU / 节点上，每个 GPU 只持有模型的一部分数据，训练时按需加载 / 卸载分片，通过通信同步分片数据。关键特性：支持 “ZeRO 优化”（零冗余优化器），分为 ZeRO-1（分片优化器状态）、ZeRO-2（分片梯度 + 优化器状态）、ZeRO-3（分片参数 + 梯度 + 优化器状态），FSDP 默认接近 ZeRO-3</li>
+</ul>
+<h2 id="pytorch-ddp-中dp-naive-和-dp-bucketing的区别">Pytorch DDP 中dp naive 和 dp bucketing的区别 </h2>
+<h3 id="data-parallel-naive朴素数据并行">Data Parallel Naive（朴素数据并行） </h3>
+<p><strong>特点</strong></p>
+<ul>
+<li>每个 GPU 完成整个反向传播（Backward Pass）后，逐个参数发起梯度同步</li>
+<li>即：对每个参数张量 <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi><mi>r</mi><mi>a</mi><msub><mi>d</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">grad_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.03588em;">g</span><span class="mord mathnormal" style="margin-right:0.02778em;">r</span><span class="mord mathnormal">a</span><span class="mord"><span class="mord mathnormal">d</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span>，单独执行一次 All-Reduce</li>
+</ul>
+<p>PyTorch 自动求导引擎能够接纳自定义反向钩子。DDP 通过注册自动求导钩子，在每次反向传播结束后触发计算流程。钩子触发时，会全面扫描所有本地模型参数，从各个参数里获取梯度张量。随后，对每个参数运用 AllReduce 集体通信（对所有进程的该参数的梯度进行求和或者取平均），计算所有进程中每个参数的平均梯度，并将结果回写到梯度张量之中。朴素解决方案虽可行但存在以下不足：</p>
+<ul>
+<li>对于大型模型中大量的小参数，AllReduce 操作在传输这些小梯度张量时效率较低。通信启动和同步的开销相对于小张量的实际数据量占比过大，导致传输过程浪费了大量时间。小张量通信效率低下会累积延迟，成为分布式训练的性能瓶颈。</li>
+<li>梯度计算和梯度同步被分为两个独立阶段，二者串行进行。梯度计算完成后才启动通信，而通信完成后才继续下一步计算。这种串行设计导致计算设备在通信期间处于空闲状态，无法充分利用资源，降低了训练效率。</li>
+</ul>
+<pre data-role="codeBlock" data-info="Python" class="language-python Python"><code><span class="token keyword keyword-import">import</span> torch
+<span class="token keyword keyword-import">import</span> torch<span class="token punctuation">.</span>nn <span class="token keyword keyword-as">as</span> nn
+<span class="token keyword keyword-import">import</span> torch<span class="token punctuation">.</span>optim <span class="token keyword keyword-as">as</span> optim
+<span class="token keyword keyword-from">from</span> torch<span class="token punctuation">.</span>utils<span class="token punctuation">.</span>data <span class="token keyword keyword-import">import</span> DataLoader<span class="token punctuation">,</span> TensorDataset
+<span class="token keyword keyword-from">from</span> torch<span class="token punctuation">.</span>nn<span class="token punctuation">.</span>parallel <span class="token keyword keyword-import">import</span> DistributedDataParallel <span class="token keyword keyword-as">as</span> DDP
+<span class="token keyword keyword-import">import</span> torch<span class="token punctuation">.</span>distributed <span class="token keyword keyword-as">as</span> dist
+<span class="token keyword keyword-import">import</span> argparse
+<span class="token keyword keyword-import">import</span> os
+
+<span class="token keyword keyword-def">def</span> <span class="token function">setup</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">:</span>
+    <span class="token triple-quoted-string string">"""初始化分布式环境"""</span>
+    dist<span class="token punctuation">.</span>init_process_group<span class="token punctuation">(</span>backend<span class="token operator">=</span><span class="token string">"nccl"</span><span class="token punctuation">)</span>  <span class="token comment"># GPU 推荐 nccl</span>
+    torch<span class="token punctuation">.</span>cuda<span class="token punctuation">.</span>set_device<span class="token punctuation">(</span><span class="token builtin">int</span><span class="token punctuation">(</span>os<span class="token punctuation">.</span>environ<span class="token punctuation">[</span><span class="token string">"LOCAL_RANK"</span><span class="token punctuation">]</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+
+<span class="token keyword keyword-def">def</span> <span class="token function">cleanup</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">:</span>
+    dist<span class="token punctuation">.</span>destroy_process_group<span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+<span class="token keyword keyword-class">class</span> <span class="token class-name">SimpleModel</span><span class="token punctuation">(</span>nn<span class="token punctuation">.</span>Module<span class="token punctuation">)</span><span class="token punctuation">:</span>
+    <span class="token keyword keyword-def">def</span> <span class="token function">__init__</span><span class="token punctuation">(</span>self<span class="token punctuation">)</span><span class="token punctuation">:</span>
+        <span class="token builtin">super</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span>__init__<span class="token punctuation">(</span><span class="token punctuation">)</span>
+        self<span class="token punctuation">.</span>net <span class="token operator">=</span> nn<span class="token punctuation">.</span>Sequential<span class="token punctuation">(</span>
+            nn<span class="token punctuation">.</span>Linear<span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">,</span> <span class="token number">512</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+            nn<span class="token punctuation">.</span>ReLU<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+            nn<span class="token punctuation">.</span>Linear<span class="token punctuation">(</span><span class="token number">512</span><span class="token punctuation">,</span> <span class="token number">10</span><span class="token punctuation">)</span>
+        <span class="token punctuation">)</span>
+    
+    <span class="token keyword keyword-def">def</span> <span class="token function">forward</span><span class="token punctuation">(</span>self<span class="token punctuation">,</span> x<span class="token punctuation">)</span><span class="token punctuation">:</span>
+        <span class="token keyword keyword-return">return</span> self<span class="token punctuation">.</span>net<span class="token punctuation">(</span>x<span class="token punctuation">)</span>
+
+<span class="token keyword keyword-def">def</span> <span class="token function">main</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">:</span>
+    setup<span class="token punctuation">(</span><span class="token punctuation">)</span>
+    local_rank <span class="token operator">=</span> <span class="token builtin">int</span><span class="token punctuation">(</span>os<span class="token punctuation">.</span>environ<span class="token punctuation">[</span><span class="token string">"LOCAL_RANK"</span><span class="token punctuation">]</span><span class="token punctuation">)</span>
+    world_size <span class="token operator">=</span> <span class="token builtin">int</span><span class="token punctuation">(</span>os<span class="token punctuation">.</span>environ<span class="token punctuation">[</span><span class="token string">"WORLD_SIZE"</span><span class="token punctuation">]</span><span class="token punctuation">)</span>
+    
+    <span class="token comment"># 创建模型、优化器</span>
+    model <span class="token operator">=</span> SimpleModel<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span>to<span class="token punctuation">(</span>local_rank<span class="token punctuation">)</span>
+    model <span class="token operator">=</span> DDP<span class="token punctuation">(</span>model<span class="token punctuation">,</span> device_ids<span class="token operator">=</span><span class="token punctuation">[</span>local_rank<span class="token punctuation">]</span><span class="token punctuation">)</span>
+    
+    <span class="token comment"># 模拟数据集</span>
+    dataset <span class="token operator">=</span> TensorDataset<span class="token punctuation">(</span>torch<span class="token punctuation">.</span>randn<span class="token punctuation">(</span><span class="token number">1000</span><span class="token punctuation">,</span> <span class="token number">100</span><span class="token punctuation">)</span><span class="token punctuation">,</span> torch<span class="token punctuation">.</span>randint<span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">,</span> <span class="token number">10</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token number">1000</span><span class="token punctuation">,</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+    sampler <span class="token operator">=</span> torch<span class="token punctuation">.</span>utils<span class="token punctuation">.</span>data<span class="token punctuation">.</span>distributed<span class="token punctuation">.</span>DistributedSampler<span class="token punctuation">(</span>
+        dataset<span class="token punctuation">,</span> num_replicas<span class="token operator">=</span>world_size<span class="token punctuation">,</span> rank<span class="token operator">=</span>local_rank
+    <span class="token punctuation">)</span>
+    dataloader <span class="token operator">=</span> DataLoader<span class="token punctuation">(</span>dataset<span class="token punctuation">,</span> batch_size<span class="token operator">=</span><span class="token number">32</span><span class="token punctuation">,</span> sampler<span class="token operator">=</span>sampler<span class="token punctuation">)</span>
+    
+    criterion <span class="token operator">=</span> nn<span class="token punctuation">.</span>CrossEntropyLoss<span class="token punctuation">(</span><span class="token punctuation">)</span>
+    optimizer <span class="token operator">=</span> optim<span class="token punctuation">.</span>SGD<span class="token punctuation">(</span>model<span class="token punctuation">.</span>parameters<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> lr<span class="token operator">=</span><span class="token number">0.01</span><span class="token punctuation">)</span>
+    
+    <span class="token comment"># 训练循环</span>
+    model<span class="token punctuation">.</span>train<span class="token punctuation">(</span><span class="token punctuation">)</span>
+    <span class="token keyword keyword-for">for</span> epoch <span class="token keyword keyword-in">in</span> <span class="token builtin">range</span><span class="token punctuation">(</span><span class="token number">3</span><span class="token punctuation">)</span><span class="token punctuation">:</span>
+        sampler<span class="token punctuation">.</span>set_epoch<span class="token punctuation">(</span>epoch<span class="token punctuation">)</span>  <span class="token comment"># 确保每个 epoch 数据打乱不同</span>
+        <span class="token keyword keyword-for">for</span> x<span class="token punctuation">,</span> y <span class="token keyword keyword-in">in</span> dataloader<span class="token punctuation">:</span>
+            x<span class="token punctuation">,</span> y <span class="token operator">=</span> x<span class="token punctuation">.</span>to<span class="token punctuation">(</span>local_rank<span class="token punctuation">)</span><span class="token punctuation">,</span> y<span class="token punctuation">.</span>to<span class="token punctuation">(</span>local_rank<span class="token punctuation">)</span>
+            optimizer<span class="token punctuation">.</span>zero_grad<span class="token punctuation">(</span><span class="token punctuation">)</span>
+            output <span class="token operator">=</span> model<span class="token punctuation">(</span>x<span class="token punctuation">)</span>
+            loss <span class="token operator">=</span> criterion<span class="token punctuation">(</span>output<span class="token punctuation">,</span> y<span class="token punctuation">)</span>
+            loss<span class="token punctuation">.</span>backward<span class="token punctuation">(</span><span class="token punctuation">)</span>
+            optimizer<span class="token punctuation">.</span>step<span class="token punctuation">(</span><span class="token punctuation">)</span>
+        
+        <span class="token keyword keyword-if">if</span> local_rank <span class="token operator">==</span> <span class="token number">0</span><span class="token punctuation">:</span>  <span class="token comment"># 只让 rank 0 打印</span>
+            <span class="token keyword keyword-print">print</span><span class="token punctuation">(</span><span class="token string-interpolation"><span class="token string">f"Epoch </span><span class="token interpolation"><span class="token punctuation">{</span>epoch<span class="token punctuation">}</span></span><span class="token string">, Loss: </span><span class="token interpolation"><span class="token punctuation">{</span>loss<span class="token punctuation">.</span>item<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">:</span><span class="token format-spec">.4f</span><span class="token punctuation">}</span></span><span class="token string">"</span></span><span class="token punctuation">)</span>
+    
+    cleanup<span class="token punctuation">(</span><span class="token punctuation">)</span>
+
+<span class="token keyword keyword-if">if</span> __name__ <span class="token operator">==</span> <span class="token string">"__main__"</span><span class="token punctuation">:</span>
+    main<span class="token punctuation">(</span><span class="token punctuation">)</span>
+</code></pre><h3 id="dp-with-bucketing分桶优化的-dp">DP with Bucketing（分桶优化的 DP） </h3>
+<p><strong>特点</strong></p>
+<ul>
+<li>将多个小梯度张量合并成一个“桶”（Bucket）（如 25MB）</li>
+<li>反向传播过程中，一旦桶满，立即异步启动 All-Reduce</li>
+<li>实现 “边计算边通信”（计算-通信重叠）</li>
+</ul>
+<h1 id="nano-vllm">nano-vllm </h1>
+<h2 id="prefill-decodekv-cache">Prefill /Decode/KV Cache </h2>
+<ul>
+<li>
+<p><strong>KV Cache</strong>:<br>
+没有KV Cache时如何计算Transformer:</p>
+  <details>
+  <summary>Python代码</summary>
+<p>Step1</p>
+<pre data-role="codeBlock" data-info="Python" class="language-python Python"><code><span class="token comment"># 输入序列</span>
+X₁ <span class="token operator">=</span> <span class="token punctuation">[</span>P₁<span class="token punctuation">,</span> P₂<span class="token punctuation">,</span> P₃<span class="token punctuation">]</span>  <span class="token comment"># 3个token</span>
+<span class="token comment"># 计算 QKV（3个token都要算）</span>
+Q₁ <span class="token operator">=</span> X₁ @ Wq  <span class="token comment"># [3, d]</span>
+K₁ <span class="token operator">=</span> X₁ @ Wk  <span class="token comment"># [3, d]  ← 计算了P₁,P₂,P₃的K</span>
+V₁ <span class="token operator">=</span> X₁ @ Wv  <span class="token comment"># [3, d]  ← 计算了P₁,P₂,P₃的V</span>
+<span class="token comment"># Attention</span>
+attn <span class="token operator">=</span> softmax<span class="token punctuation">(</span>Q₁ @ K₁<span class="token punctuation">.</span>T <span class="token operator">/</span> √d<span class="token punctuation">)</span>  <span class="token comment"># [3, 3]</span>
+output <span class="token operator">=</span> attn @ V₁
+<span class="token comment"># 取最后一个token作为输出</span>
+O₁ <span class="token operator">=</span> output<span class="token punctuation">[</span><span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">]</span>
+</code></pre><p>Step2:</p>
+<pre data-role="codeBlock" data-info="Python" class="language-python Python"><code><span class="token comment"># 输入序列（变长了）</span>
+X₂ <span class="token operator">=</span> <span class="token punctuation">[</span>P₁<span class="token punctuation">,</span> P₂<span class="token punctuation">,</span> P₃<span class="token punctuation">,</span> O₁<span class="token punctuation">]</span>  <span class="token comment"># 4个token</span>
+<span class="token comment"># 计算 QKV（4个token都要算，包括重复的P!）</span>
+Q₂ <span class="token operator">=</span> X₂ @ Wq  <span class="token comment"># [4, d]</span>
+K₂ <span class="token operator">=</span> X₂ @ Wk  <span class="token comment"># [4, d]  ← 又计算了P₁,P₂,P₃的K！浪费！</span>
+V₂ <span class="token operator">=</span> X₂ @ Wv  <span class="token comment"># [4, d]  ← 又计算了P₁,P₂,P₃的V！浪费！</span>
+<span class="token comment"># Attention</span>
+attn <span class="token operator">=</span> softmax<span class="token punctuation">(</span>Q₂ @ K₂<span class="token punctuation">.</span>T <span class="token operator">/</span> √d<span class="token punctuation">)</span>  <span class="token comment"># [4, 4]</span>
+output <span class="token operator">=</span> attn @ V₂
+O₂ <span class="token operator">=</span> output<span class="token punctuation">[</span><span class="token operator">-</span><span class="token number">1</span><span class="token punctuation">]</span>
+</code></pre>  </details>
+<p>有KV Cache时如何计算Transformer:</p>
+  <details>
+  <summary>Python代码</summary>
+<p>Prefill 阶段（构建缓存）</p>
+<pre data-role="codeBlock" data-info="Python" class="language-python Python"><code><span class="token keyword keyword-import">import</span> math
+    <span class="token comment"># 输入: [P₁, P₂, P₃, ..., Pₙ]  n个prompt token</span>
+    <span class="token comment"># 对每一层 Transformer:</span>
+    <span class="token keyword keyword-for">for</span> layer <span class="token keyword keyword-in">in</span> layers<span class="token punctuation">:</span>
+        <span class="token comment"># 并行计算所有token的QKV</span>
+        Q <span class="token operator">=</span> X @ Wq  <span class="token comment"># [n, d]</span>
+        K <span class="token operator">=</span> X @ Wk  <span class="token comment"># [n, d]  ← 缓存</span>
+        V <span class="token operator">=</span> X @ Wv  <span class="token comment"># [n, d]  ← 缓存</span>
+        <span class="token comment"># 存储到KV Cache</span>
+        kv_cache<span class="token punctuation">[</span>layer<span class="token punctuation">]</span> <span class="token operator">=</span> <span class="token punctuation">{</span>
+            <span class="token string">'K'</span><span class="token punctuation">:</span> K<span class="token punctuation">,</span>  <span class="token comment"># [n, d]</span>
+            <span class="token string">'V'</span><span class="token punctuation">:</span> V   <span class="token comment"># [n, d]</span>
+        <span class="token punctuation">}</span>
+        <span class="token comment"># 计算Attention输出</span>
+        output <span class="token operator">=</span> softmax<span class="token punctuation">(</span>Q @ K<span class="token punctuation">.</span>T <span class="token operator">/</span> math<span class="token punctuation">.</span>sqrt<span class="token punctuation">(</span>d<span class="token punctuation">)</span><span class="token punctuation">)</span> @ V
+</code></pre><p>Decode 阶段（复用缓存）</p>
+<pre data-role="codeBlock" data-info="Python" class="language-python Python"><code><span class="token keyword keyword-import">import</span> math
+    <span class="token comment"># 生成第1个token O₁:</span>
+new_token <span class="token operator">=</span> O₁
+<span class="token keyword keyword-for">for</span> layer <span class="token keyword keyword-in">in</span> layers<span class="token punctuation">:</span>
+    <span class="token comment"># 只计算新token的QKV</span>
+    q <span class="token operator">=</span> new_token @ Wq  <span class="token comment"># [1, d]</span>
+    k <span class="token operator">=</span> new_token @ Wk  <span class="token comment"># [1, d]</span>
+    v <span class="token operator">=</span> new_token @ Wv  <span class="token comment"># [1, d]</span>
+    
+    <span class="token comment"># 追加到缓存</span>
+    kv_cache<span class="token punctuation">[</span>layer<span class="token punctuation">]</span><span class="token punctuation">[</span><span class="token string">'K'</span><span class="token punctuation">]</span> <span class="token operator">=</span> concat<span class="token punctuation">(</span>kv_cache<span class="token punctuation">[</span>layer<span class="token punctuation">]</span><span class="token punctuation">[</span><span class="token string">'K'</span><span class="token punctuation">]</span><span class="token punctuation">,</span> k<span class="token punctuation">)</span>  <span class="token comment"># [n+1, d]</span>
+    kv_cache<span class="token punctuation">[</span>layer<span class="token punctuation">]</span><span class="token punctuation">[</span><span class="token string">'V'</span><span class="token punctuation">]</span> <span class="token operator">=</span> concat<span class="token punctuation">(</span>kv_cache<span class="token punctuation">[</span>layer<span class="token punctuation">]</span><span class="token punctuation">[</span><span class="token string">'V'</span><span class="token punctuation">]</span><span class="token punctuation">,</span> v<span class="token punctuation">)</span>  <span class="token comment"># [n+1, d]</span>
+    
+    <span class="token comment"># Attention: Q只查询，KV用缓存</span>
+    output <span class="token operator">=</span> softmax<span class="token punctuation">(</span>q @ K_cache<span class="token punctuation">.</span>T <span class="token operator">/</span> math<span class="token punctuation">.</span>sqrt<span class="token punctuation">(</span>d<span class="token punctuation">)</span><span class="token punctuation">)</span> @ V_cache
+</code></pre></details></li>
+<li>
+<p>为什么Q不需要缓存:<br>
+Q是当前token的查询向量。K是所有token的键向量。V是所有token的值向量。Q用完即弃，历史Q不会再被使用，缓存没有意义。</p>
+</li>
+<li>
+<p>总推理时间 = Prefill 时间 + Decode 时间 × 生成 token 数</p>
+</li>
+<li>
+<p>短 Prompt + 长回复：Decode 主导耗时</p>
+</li>
+<li>
+<p>长 Prompt + 短回复：Prefill 主导耗时<br>
+┌─────────────────────────────────────────┐<br>
+│           Prefill 阶段                   │<br>
+│  输入: ["请", "解释", "Transformer"]     │<br>
+│        ↓ 并行计算                        │<br>
+│  输出: KV Cache + 第一个生成 token       │<br>
+└─────────────────────────────────────────┘<br>
+┌─────────────────────────────────────────┐<br>
+│           Decode 阶段                    │<br>
+│  输入: token₁ → token₂ → token₃ → ...   │<br>
+│        ↓ 串行迭代                        │<br>
+│  输出: 完整回复内容                      │<br>
+└─────────────────────────────────────────┘</p>
+</li>
+</ul>
+
+      </div>
+      
+      
+    
+    
+    
+    
+    
+    
+  
+    </body></html>
