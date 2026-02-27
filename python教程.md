@@ -168,3 +168,63 @@ print(Example.class_method()) # 类变量
 print(Example.static_method()) # 静态方法
 print(obj.is_high_salary(15000))     # True
 ```
+## @Property 装饰器
+它的主要作用是将类的方法转换为只读属性，或者为属性的获取、设置和删除提供自定义逻辑（Getter/Setter/Deleter），同时保持调用时的简洁语法（像访问普通变量一样）
+例子：
+```Python
+class Person:
+    def __init__(self, name):
+        self._name = name  # 内部变量通常加下划线
+    
+    @property
+    def name(self):
+        """这是 getter 方法，现在可以像属性一样访问"""
+        print("正在获取 name...")
+        return self._name
+
+# 使用
+p = Person("Alice")
+print(p.name)  # 输出: 正在获取 name... \n Alice
+# p.name = "Bob"  # ❌ 报错！AttributeError: can't set attribute (因为是只读的)
+```
+## @dataclass 装饰器
+**核心作用是自动化生成样板代码**。在引入它之前，如果你要写一个主要用来存储数据的类（类似 Java 的 POJO 或 C 的结构体），你需要手动写 __init__、__repr__（生成友好的字符串表示）、__eq__（实现对象相等性比较） 等方法，非常繁琐。@dataclass 可以根据你的类型注解，自动帮你生成这些方法。
+例子：
+```Python
+传统写法
+class Person:
+    def __init__(self, name: str, age: int, job: str = "Unknown"):
+        self.name = name
+        self.age = age
+        self.job = job
+
+    def __repr__(self):
+        return f"Person(name={self.name!r}, age={self.age!r}, job={self.job!r})"
+
+    def __eq__(self, other):
+        if not isinstance(other, Person):
+            return False
+        return (self.name, self.age, self.job) == (other.name, other.age, other.job)
+
+# 实例化
+p = Person("Alice", 30)
+print(p)  # Person(name='Alice', age=30, job='Unknown')
+```
+
+```Python
+使用dataclass
+from dataclasses import dataclass
+@dataclass
+class Person:
+    name: str
+    age: int
+    job: str = "Unknown"  # 支持默认值
+
+# 实例化（完全一样）
+p = Person("Alice", 30)
+print(p)  # 自动生成了 __repr__: Person(name='Alice', age=30, job='Unknown')
+
+# 自动支持比较
+p2 = Person("Alice", 30, "Unknown")
+print(p == p2)  # True (自动生成了 __eq__)
+```
