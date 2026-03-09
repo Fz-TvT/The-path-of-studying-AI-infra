@@ -247,7 +247,7 @@ PagedAttention引入了以下关键概念:
 batch 维度通常在物理存储时被压缩为 1（因为一个物理块同一时间只服务一个序列的逻辑块），即逻辑上是 (B,H,N,D) ，但物理存储往往是(H,N,D) 或 (2,H,N,D) （2代表K和V）。
 - 内存池 形状为 [num_pages,batch,heads,block_size,head_dim]
 5. 内存访问优化
-- 非连续内存访问:通过块表，PagedAttention 可以从非连续的页面中拼接出完整的 KKK 和 VVV。
+- 非连续内存访问:通过块表，PagedAttention 可以从非连续的页面中拼接出完整的 $K$ 和 $V$。
 - CUDA 内核优化：在 GPU 上，PagedAttention 使用定制的 CUDA 内核，将页面拼接和注意力计算融合，减少内存拷贝开销
 ### 实现伪代码
 ``` Python
@@ -302,4 +302,487 @@ class PagedAttention:
         weights = torch.softmax(scores, dim=-1)
         output = torch.matmul(weights, V_cached)
         return output
+```
+# vLLM中  Cuda算子
+## RoPE 
+<details>
+<summary>RoPE_cuda</summary>
+
+``` C
+#include <torch/all.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
+
+#include "cuda_compat.h"
+#include "dispatch_utils.h"
+
+namespace vllm {
+
+template <typename scalar_t, bool IS_NEOX>
+inline __device__ void apply_token_rotary_embedding(
+    scalar_t* __restrict__ arr, const scalar_t* __restrict__ cos_ptr,
+    const scalar_t* __restrict__ sin_ptr, int rot_offset, int embed_dim) {
+  int x_index, y_index;
+  scalar_t cos, sin;
+  if (IS_NEOX) {
+    // GPT-NeoX style rotary embedding.
+    x_index = rot_offset;
+    y_index = embed_dim + rot_offset;
+    cos = VLLM_LDG(cos_ptr + x_index);
+    sin = VLLM_LDG(sin_ptr + x_index);
+  } else {
+    // GPT-J style rotary embedding.
+    x_index = 2 * rot_offset;
+    y_index = 2 * rot_offset + 1;
+    cos = VLLM_LDG(cos_ptr + x_index / 2);
+    sin = VLLM_LDG(sin_ptr + x_index / 2);
+  }
+
+  const scalar_t x = arr[x_index];
+  const scalar_t y = arr[y_index];
+  arr[x_index] = x * cos - y * sin;
+  arr[y_index] = y * cos + x * sin;
+}
+
+template <typename scalar_t, bool IS_NEOX>
+inline __device__ void apply_rotary_embedding(
+    scalar_t* __restrict__ query,  // [batch_size, seq_len, num_heads,
+                                   // head_size] or [num_tokens, num_heads,
+                                   // head_size]
+    scalar_t* __restrict__ key,    // nullptr or
+                                   // [batch_size, seq_len, num_kv_heads,
+                                   // head_size] or [num_tokens, num_kv_heads,
+                                   // head_size]
+    const scalar_t* cache_ptr, const int head_size, const int num_heads,
+    const int num_kv_heads, const int rot_dim, const int token_idx,
+    const int64_t query_stride, const int64_t key_stride,
+    const int64_t head_stride) {
+  const int embed_dim = rot_dim / 2;
+  const scalar_t* cos_ptr = cache_ptr;
+  const scalar_t* sin_ptr = cache_ptr + embed_dim;
+
+  const int nq = num_heads * embed_dim;
+  for (int i = threadIdx.x; i < nq; i += blockDim.x) {
+    const int head_idx = i / embed_dim;
+    const int64_t token_head =
+        token_idx * query_stride + head_idx * head_stride;
+    const int rot_offset = i % embed_dim;
+    apply_token_rotary_embedding<scalar_t, IS_NEOX>(
+        query + token_head, cos_ptr, sin_ptr, rot_offset, embed_dim);
+  }
+
+  if (key != nullptr) {
+    const int nk = num_kv_heads * embed_dim;
+    for (int i = threadIdx.x; i < nk; i += blockDim.x) {
+      const int head_idx = i / embed_dim;
+      const int64_t token_head =
+          token_idx * key_stride + head_idx * head_stride;
+      const int rot_offset = i % embed_dim;
+      apply_token_rotary_embedding<scalar_t, IS_NEOX>(
+          key + token_head, cos_ptr, sin_ptr, rot_offset, embed_dim);
+    }
+  }
+}
+
+template <typename scalar_t, bool IS_NEOX>
+__global__ void rotary_embedding_kernel(
+    const int64_t* __restrict__ positions,  // [batch_size, seq_len] or
+                                            // [num_tokens]
+    scalar_t* __restrict__ query,           // [batch_size, seq_len, num_heads,
+                                   // head_size] or [num_tokens, num_heads,
+                                   // head_size]
+    scalar_t* __restrict__ key,  // nullptr or
+                                 // [batch_size, seq_len, num_kv_heads,
+                                 // head_size] or [num_tokens, num_kv_heads,
+                                 // head_size]
+    const scalar_t* __restrict__ cos_sin_cache,  // [max_position, 2, rot_dim //
+                                                 // 2]
+    const int rot_dim, const int64_t query_stride, const int64_t key_stride,
+    const int64_t head_stride, const int num_heads, const int num_kv_heads,
+    const int head_size) {
+  // Each thread block is responsible for one token.
+  const int token_idx = blockIdx.x;
+  int64_t pos = positions[token_idx];
+  const scalar_t* cache_ptr = cos_sin_cache + pos * rot_dim;
+
+  apply_rotary_embedding<scalar_t, IS_NEOX>(
+      query, key, cache_ptr, head_size, num_heads, num_kv_heads, rot_dim,
+      token_idx, query_stride, key_stride, head_stride);
+}
+
+}  // namespace vllm
+
+void rotary_embedding(
+    torch::Tensor& positions,  // [batch_size, seq_len] or [num_tokens]
+    torch::Tensor& query,  // [batch_size, seq_len, num_heads * head_size] or
+                           // [num_tokens, num_heads * head_size] or
+                           // [batch_size, seq_len, num_heads, head_size] or
+                           // [num_tokens, num_heads, head_size]
+    std::optional<torch::Tensor> key,
+    // null or
+    // [batch_size, seq_len, num_kv_heads * head_size] or
+    // [num_tokens, num_kv_heads * head_size] or
+    // [batch_size, seq_len, num_heads, head_size] or
+    // [num_tokens, num_heads, head_size]
+    int64_t head_size,
+    torch::Tensor& cos_sin_cache,  // [max_position, rot_dim]
+    bool is_neox) {
+  // num_tokens = batch_size * seq_len
+  int64_t num_tokens = positions.numel();
+  int positions_ndim = positions.dim();
+
+  // Make sure num_tokens dim is consistent across positions, query, and key
+  TORCH_CHECK(
+      positions_ndim == 1 || positions_ndim == 2,
+      "positions must have shape [num_tokens] or [batch_size, seq_len]");
+  if (positions_ndim == 1) {
+    TORCH_CHECK(query.size(0) == positions.size(0) &&
+                    (!key.has_value() || key->size(0) == positions.size(0)),
+                "query, key and positions must have the same number of tokens");
+  }
+  if (positions_ndim == 2) {
+    TORCH_CHECK(
+        query.size(0) == positions.size(0) &&
+            (!key.has_value() || key->size(0) == positions.size(0)) &&
+            query.size(1) == positions.size(1) &&
+            (!key.has_value() || key->size(1) == positions.size(1)),
+        "query, key and positions must have the same batch_size and seq_len");
+  }
+
+  // Make sure head_size is valid for query and key
+  // hidden_size = num_heads * head_size
+  int query_hidden_size = query.numel() / num_tokens;
+  int key_hidden_size = key.has_value() ? key->numel() / num_tokens : 0;
+  TORCH_CHECK(query_hidden_size % head_size == 0);
+  TORCH_CHECK(key_hidden_size % head_size == 0);
+
+  // Make sure query and key have consistent number of heads
+  int num_heads = query_hidden_size / head_size;
+  int num_kv_heads = key.has_value() ? key_hidden_size / head_size : num_heads;
+  TORCH_CHECK(num_heads % num_kv_heads == 0);
+
+  int rot_dim = cos_sin_cache.size(1);
+  int seq_dim_idx = positions_ndim - 1;
+  int64_t query_stride = query.stride(seq_dim_idx);
+  int64_t key_stride = key.has_value() ? key->stride(seq_dim_idx) : 0;
+  // Determine head stride: for [*, heads, head_size] use stride of last dim;
+  // for flat [*, heads*head_size], heads blocks are contiguous of size
+  // head_size
+  int query_ndim = query.dim();
+  int64_t head_stride =
+      (query_ndim == positions_ndim + 2) ? query.stride(-2) : head_size;
+
+  dim3 grid(num_tokens);
+  dim3 block(std::min<int64_t>(num_heads * rot_dim / 2, 512));
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(query));
+  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+  VLLM_DISPATCH_FLOATING_TYPES(query.scalar_type(), "rotary_embedding", [&] {
+    if (is_neox) {
+      vllm::rotary_embedding_kernel<scalar_t, true><<<grid, block, 0, stream>>>(
+          positions.data_ptr<int64_t>(), query.data_ptr<scalar_t>(),
+          key.has_value() ? key->data_ptr<scalar_t>() : nullptr,
+          cos_sin_cache.data_ptr<scalar_t>(), rot_dim, query_stride, key_stride,
+          head_stride, num_heads, num_kv_heads, head_size);
+    } else {
+      vllm::rotary_embedding_kernel<scalar_t, false>
+          <<<grid, block, 0, stream>>>(
+              positions.data_ptr<int64_t>(), query.data_ptr<scalar_t>(),
+              key.has_value() ? key->data_ptr<scalar_t>() : nullptr,
+              cos_sin_cache.data_ptr<scalar_t>(), rot_dim, query_stride,
+              key_stride, head_stride, num_heads, num_kv_heads, head_size);
+    }
+  });
+}
+```
+## RMSNorm
+<details>
+<summary>RMSNorm_cuda</summary>
+
+``` C
+#include "type_convert.cuh"
+#include "dispatch_utils.h"
+#include "cub_helpers.h"
+#include "core/batch_invariant.hpp"
+#include "quantization/vectorization_utils.cuh"
+
+#include <torch/cuda.h>
+#include <c10/cuda/CUDAGuard.h>
+
+namespace vllm {
+
+// TODO(woosuk): Further optimize this kernel.
+template <typename scalar_t, int VEC_SIZE, int NUM_DIMS>
+__global__ void rms_norm_kernel(
+    scalar_t* __restrict__ out,           // [..., hidden_size]
+    const scalar_t* __restrict__ input,   // [..., hidden_size]
+    const int64_t input_stride_d2,        // input.stride(-2)
+    const int64_t input_stride_d3,        // input.stride(-3)
+    const int64_t input_stride_d4,        // input.stride(-4)
+    const int64_t input_shape_d2,         // input.size(-2)
+    const int64_t input_shape_d3,         // input.size(-3)
+    const scalar_t* __restrict__ weight,  // [hidden_size]
+    const float epsilon, const int num_tokens, const int hidden_size) {
+  __shared__ float s_variance;
+  float variance = 0.0f;
+  const scalar_t* input_row;
+  if constexpr (NUM_DIMS == 2) {
+    // 2D for layernorm normal case [batch_size, hidden]
+    input_row = input + blockIdx.x * input_stride_d2;
+  } else if constexpr (NUM_DIMS == 3) {
+    // 3D for q/k norm [batch_size, num_heads, head_size]
+    int batch_idx = blockIdx.x / input_shape_d2;
+    int head_idx = blockIdx.x % input_shape_d2;
+    input_row =
+        input + batch_idx * input_stride_d3 + head_idx * input_stride_d2;
+  } else if constexpr (NUM_DIMS == 4) {
+    // 4D for transformers model_impl qk norm [batch, seq, head, head_dim]
+    int batch_idx = blockIdx.x / (input_shape_d3 * input_shape_d2);
+    int remaining = blockIdx.x % (input_shape_d3 * input_shape_d2);
+    int seq_idx = remaining / input_shape_d2;
+    int head_idx = remaining % input_shape_d2;
+    input_row = input + batch_idx * input_stride_d4 +
+                seq_idx * input_stride_d3 + head_idx * input_stride_d2;
+  }
+
+  auto vec_op = [&variance](const vec_n_t<scalar_t, VEC_SIZE>& vec) {
+#pragma unroll
+    for (int i = 0; i < VEC_SIZE; ++i) {
+      float x = static_cast<float>(vec.val[i]);
+      variance += x * x;
+    }
+  };
+  auto scalar_op = [&variance](const scalar_t& val) {
+    float x = static_cast<float>(val);
+    variance += x * x;
+  };
+  vllm::vectorize_read_with_alignment<VEC_SIZE>(
+      input_row, hidden_size, threadIdx.x, blockDim.x, vec_op, scalar_op);
+
+  using BlockReduce = cub::BlockReduce<float, 1024>;
+  __shared__ typename BlockReduce::TempStorage reduceStore;
+  variance = BlockReduce(reduceStore).Reduce(variance, CubAddOp{}, blockDim.x);
+
+  if (threadIdx.x == 0) {
+    s_variance = rsqrtf(variance / hidden_size + epsilon);
+  }
+  __syncthreads();
+
+  scalar_t* out_row = out + blockIdx.x * hidden_size;
+  auto* v_in = reinterpret_cast<const vec_n_t<scalar_t, VEC_SIZE>*>(input_row);
+  auto* v_w = reinterpret_cast<const vec_n_t<scalar_t, VEC_SIZE>*>(weight);
+  auto* v_out = reinterpret_cast<vec_n_t<scalar_t, VEC_SIZE>*>(out_row);
+  for (int i = threadIdx.x; i < hidden_size / VEC_SIZE; i += blockDim.x) {
+    vec_n_t<scalar_t, VEC_SIZE> dst;
+    vec_n_t<scalar_t, VEC_SIZE> src1 = v_in[i];
+    vec_n_t<scalar_t, VEC_SIZE> src2 = v_w[i];
+#pragma unroll
+    for (int j = 0; j < VEC_SIZE; j++) {
+      float x = static_cast<float>(src1.val[j]);
+      dst.val[j] = ((scalar_t)(x * s_variance)) * src2.val[j];
+    }
+    v_out[i] = dst;
+  }
+}
+
+/* Function specialization in the case of FP16/BF16 tensors.
+   Additional optimizations we can make in this case are
+   packed and vectorized operations, which help with the
+   memory latency bottleneck. */
+template <typename scalar_t, int width>
+__global__ std::enable_if_t<(width > 0) && _typeConvert<scalar_t>::exists>
+fused_add_rms_norm_kernel(
+    scalar_t* __restrict__ input,  // [..., hidden_size]
+    const int64_t input_stride,
+    scalar_t* __restrict__ residual,      // [..., hidden_size]
+    const scalar_t* __restrict__ weight,  // [hidden_size]
+    const float epsilon, const int num_tokens, const int hidden_size) {
+  // Sanity checks on our vector struct and type-punned pointer arithmetic
+  static_assert(std::is_pod_v<_f16Vec<scalar_t, width>>);
+  static_assert(sizeof(_f16Vec<scalar_t, width>) == sizeof(scalar_t) * width);
+
+  const int vec_hidden_size = hidden_size / width;
+  const int64_t vec_input_stride = input_stride / width;
+  __shared__ float s_variance;
+  float variance = 0.0f;
+  /* These and the argument pointers are all declared `restrict` as they are
+     not aliased in practice. Argument pointers should not be dereferenced
+     in this kernel as that would be undefined behavior */
+  auto* __restrict__ input_v =
+      reinterpret_cast<_f16Vec<scalar_t, width>*>(input);
+  auto* __restrict__ residual_v =
+      reinterpret_cast<_f16Vec<scalar_t, width>*>(residual);
+  auto* __restrict__ weight_v =
+      reinterpret_cast<const _f16Vec<scalar_t, width>*>(weight);
+
+  for (int idx = threadIdx.x; idx < vec_hidden_size; idx += blockDim.x) {
+    int id = blockIdx.x * vec_hidden_size + idx;
+    int64_t strided_id = blockIdx.x * vec_input_stride + idx;
+    _f16Vec<scalar_t, width> temp = input_v[strided_id];
+    temp += residual_v[id];
+    variance += temp.sum_squares();
+    residual_v[id] = temp;
+  }
+
+  using BlockReduce = cub::BlockReduce<float, 1024>;
+  __shared__ typename BlockReduce::TempStorage reduceStore;
+  variance = BlockReduce(reduceStore).Reduce(variance, CubAddOp{}, blockDim.x);
+
+  if (threadIdx.x == 0) {
+    s_variance = rsqrtf(variance / hidden_size + epsilon);
+  }
+  __syncthreads();
+
+  for (int idx = threadIdx.x; idx < vec_hidden_size; idx += blockDim.x) {
+    int id = blockIdx.x * vec_hidden_size + idx;
+    int64_t strided_id = blockIdx.x * vec_input_stride + idx;
+    _f16Vec<scalar_t, width> temp = residual_v[id];
+    temp *= s_variance;
+    temp *= weight_v[idx];
+    input_v[strided_id] = temp;
+  }
+}
+
+/* Generic fused_add_rms_norm_kernel
+   The width field is not used here but necessary for other specializations.
+ */
+template <typename scalar_t, int width>
+__global__ std::enable_if_t<(width == 0) || !_typeConvert<scalar_t>::exists>
+fused_add_rms_norm_kernel(
+    scalar_t* __restrict__ input,  // [..., hidden_size]
+    const int64_t input_stride,
+    scalar_t* __restrict__ residual,      // [..., hidden_size]
+    const scalar_t* __restrict__ weight,  // [hidden_size]
+    const float epsilon, const int num_tokens, const int hidden_size) {
+  __shared__ float s_variance;
+  float variance = 0.0f;
+
+  for (int idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
+    scalar_t z = input[blockIdx.x * input_stride + idx];
+    z += residual[blockIdx.x * hidden_size + idx];
+    float x = (float)z;
+    variance += x * x;
+    residual[blockIdx.x * hidden_size + idx] = z;
+  }
+
+  using BlockReduce = cub::BlockReduce<float, 1024>;
+  __shared__ typename BlockReduce::TempStorage reduceStore;
+  variance = BlockReduce(reduceStore).Reduce(variance, CubAddOp{}, blockDim.x);
+
+  if (threadIdx.x == 0) {
+    s_variance = rsqrtf(variance / hidden_size + epsilon);
+  }
+  __syncthreads();
+
+  for (int idx = threadIdx.x; idx < hidden_size; idx += blockDim.x) {
+    float x = (float)residual[blockIdx.x * hidden_size + idx];
+    input[blockIdx.x * input_stride + idx] =
+        ((scalar_t)(x * s_variance)) * weight[idx];
+  }
+}
+
+}  // namespace vllm
+
+void rms_norm(torch::Tensor& out,     // [..., hidden_size]
+              torch::Tensor& input,   // [..., hidden_size]
+              torch::Tensor& weight,  // [hidden_size]
+              double epsilon) {
+  TORCH_CHECK(out.is_contiguous());
+  if (input.stride(-1) != 1) {
+    input = input.contiguous();
+  }
+  TORCH_CHECK(input.stride(-1) == 1);
+  TORCH_CHECK(weight.is_contiguous());
+
+  int hidden_size = input.size(-1);
+
+  int num_tokens = input.numel() / hidden_size;
+  int num_dims = input.dim();
+  int64_t input_stride_d2 = input.stride(-2);
+  int64_t input_stride_d3 = (num_dims >= 3) ? input.stride(-3) : 0;
+  int64_t input_stride_d4 = (num_dims >= 4) ? input.stride(-4) : 0;
+  int64_t input_shape_d2 = (num_dims >= 3) ? input.size(-2) : 0;
+  int64_t input_shape_d3 = (num_dims >= 4) ? input.size(-3) : 0;
+
+  // For large num_tokens, use smaller blocks to increase SM concurrency.
+  const int max_block_size = (num_tokens < 256) ? 1024 : 256;
+  dim3 grid(num_tokens);
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
+  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+  VLLM_DISPATCH_RANK234(num_dims, [&] {
+    VLLM_DISPATCH_FLOATING_TYPES(input.scalar_type(), "rms_norm_kernel", [&] {
+      const int calculated_vec_size =
+          std::gcd(16 / sizeof(scalar_t), hidden_size);
+      const int block_size =
+          std::min(hidden_size / calculated_vec_size, max_block_size);
+      dim3 block(block_size);
+      VLLM_DISPATCH_VEC_SIZE(calculated_vec_size, [&] {
+        vllm::rms_norm_kernel<scalar_t, vec_size, tensor_rank>
+            <<<grid, block, 0, stream>>>(
+                out.data_ptr<scalar_t>(), input.data_ptr<scalar_t>(),
+                input_stride_d2, input_stride_d3, input_stride_d4,
+                input_shape_d2, input_shape_d3, weight.data_ptr<scalar_t>(),
+                epsilon, num_tokens, hidden_size);
+      });
+    });
+  });
+}
+
+#define LAUNCH_FUSED_ADD_RMS_NORM(width)                                    \
+  VLLM_DISPATCH_FLOATING_TYPES(                                             \
+      input.scalar_type(), "fused_add_rms_norm_kernel", [&] {               \
+        vllm::fused_add_rms_norm_kernel<scalar_t, width>                    \
+            <<<grid, block, 0, stream>>>(                                   \
+                input.data_ptr<scalar_t>(), input_stride,                   \
+                residual.data_ptr<scalar_t>(), weight.data_ptr<scalar_t>(), \
+                epsilon, num_tokens, hidden_size);                          \
+      });
+
+void fused_add_rms_norm(torch::Tensor& input,     // [..., hidden_size]
+                        torch::Tensor& residual,  // [..., hidden_size]
+                        torch::Tensor& weight,    // [hidden_size]
+                        double epsilon) {
+  TORCH_CHECK(weight.scalar_type() == input.scalar_type());
+  TORCH_CHECK(input.scalar_type() == residual.scalar_type());
+  TORCH_CHECK(residual.is_contiguous());
+  TORCH_CHECK(weight.is_contiguous());
+  int hidden_size = input.size(-1);
+  int64_t input_stride = input.stride(-2);
+  int num_tokens = input.numel() / hidden_size;
+
+  dim3 grid(num_tokens);
+  /* This kernel is memory-latency bound in many scenarios.
+     When num_tokens is large, a smaller block size allows
+     for increased block occupancy on CUs and better latency
+     hiding on global mem ops. */
+  const int max_block_size = (num_tokens < 256) ? 1024 : 256;
+  dim3 block(std::min(hidden_size, max_block_size));
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
+  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+  /*If the tensor types are FP16/BF16, try to use the optimized kernel
+    with packed + vectorized ops.
+    Max optimization is achieved with a width-8 vector of FP16/BF16s
+    since we can load at most 128 bits at once in a global memory op.
+    However, this requires each tensor's data to be aligned to 16
+    bytes.
+   */
+  auto inp_ptr = reinterpret_cast<std::uintptr_t>(input.data_ptr());
+  auto res_ptr = reinterpret_cast<std::uintptr_t>(residual.data_ptr());
+  auto wt_ptr = reinterpret_cast<std::uintptr_t>(weight.data_ptr());
+  constexpr int vector_width = 8;
+  constexpr int req_alignment_bytes =
+      vector_width * 2;  // vector_width * sizeof(bfloat16 or float16) (float32
+                         // falls back to non-vectorized version anyway)
+  bool ptrs_are_aligned = inp_ptr % req_alignment_bytes == 0 &&
+                          res_ptr % req_alignment_bytes == 0 &&
+                          wt_ptr % req_alignment_bytes == 0;
+  bool offsets_are_multiple_of_vector_width =
+      hidden_size % vector_width == 0 && input_stride % vector_width == 0;
+  bool batch_invariant_launch = vllm::vllm_is_batch_invariant();
+  if (ptrs_are_aligned && offsets_are_multiple_of_vector_width &&
+      !batch_invariant_launch) {
+    LAUNCH_FUSED_ADD_RMS_NORM(8);
+  } else {
+    LAUNCH_FUSED_ADD_RMS_NORM(0);
+  }
+}
 ```
