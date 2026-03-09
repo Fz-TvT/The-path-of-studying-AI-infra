@@ -1,4 +1,32 @@
 # Python大型项目中用到的python内容
+## 实例
+实例是类的具体化
+```Python
+//定义类
+class Dog:
+    # 初始化方法：每次创建新实例时自动调用
+    def __init__(self, name, age):
+        self.name = name  # 实例属性：每只狗的名字不同
+        self.age = age    # 实例属性：每只狗的年龄不同
+    
+    def bark(self):
+        # 实例方法：描述这个实例能做什么
+        return f"{self.name} 说：汪汪！"
+//创建实例
+# 创建第一个实例
+dog1 = Dog("旺财", 3)
+# 创建第二个实例
+dog2 = Dog("小白", 5)
+//使用实例
+print(dog1.name)       # 输出: 旺财
+print(dog2.name)       # 输出: 小白
+print(dog1.bark())     # 输出: 旺财 说：汪汪！
+print(dog2.bark())     # 输出: 小白 说：汪汪！
+# 修改一个实例的属性，不会影响另一个
+dog1.age = 4
+print(dog1.age)        # 输出: 4
+print(dog2.age)        # 输出: 5 (保持不变)
+```
 ## 基类的定义和使用
 也叫做父类/超类 
 **我们首先定义一个基类**

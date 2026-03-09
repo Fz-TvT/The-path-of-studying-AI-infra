@@ -1,4 +1,8 @@
 # Picotron
+参考课程:https://www.bilibili.com/video/BV1vGRpYvE4R/?spm_id_from=333.1387.favlist.content.click&vd_source=4bb508727c639cc0fda63b8fa83cc370
+(又是被印度人统治的一天)
+## 激活重计算
+
 ## 数据并行
 数据并行分为DP（Data Parallel）、DDP （Distributed Data Parallel）和 FSDP（Fully Sharded Data Parallel）
 
@@ -91,6 +95,8 @@ if __name__ == "__main__":
 - 实现 “边计算边通信”（计算-通信重叠）
 
 # nano-vllm
+参考视频:https://www.bilibili.com/video/BV1sY3wzZEDJ?spm_id_from=333.788.videopod.sections&vd_source=4bb508727c639cc0fda63b8fa83cc370
+讲解源码部分
 ## Prefill/Decode/KV Cache 
 - **KV Cache**:
 没有KV Cache时如何计算Transformer:
@@ -184,3 +190,116 @@ if __name__ == "__main__":
 │        ↓ 串行迭代                        │
 │  输出: 完整回复内容                      │
 └─────────────────────────────────────────┘
+## Self-attention - MHA GQA MQA MLA
+![all](picture/mla_mha等.png){width=70%}
+**Multi-HeadAttention（MHA）**
+在推理过程中，随着输入文本的不断增多，由于KV cache越存越大的问题，所以出现了MQA
+![all](picture/mha.png){width=70%}
+**Multi-QueryAttention（MQA）**
+MQA中每个head的Query共享K和V矩阵，KV cache的内存降低到了$\frac{1}{n}$, 缺点是会导致性能的下降以及模型的不稳定性。
+![all](picture/mqa.png){width=20%}
+**Grouped-QueryAttention（GQA）**
+![all](picture/gqa.png){width=20%}
+
+## Rotary-Embedding
+
+## 图捕获
+**图捕获流程（CUDA Graph）**
+捕获阶段 (Capture)：
+- 程序先“ dummy run”（空跑）一次真实的计算过程。
+- NVIDIA 驱动会记录这期间所有 GPU 操作（Kernel 启动、内存拷贝等）及其依赖关系，构建一个静态的 CUDA Graph。
+
+重放阶段 (Replay/Instantiate)：
+- 后续相同的计算请求，CPU 不再逐个发送 Kernel 启动指令。
+- CPU 只需提交一个 “执行图” 的指令。
+- GPU 驱动直接调度整个图，自动处理内部依赖，无需 CPU 频繁干预
+
+## Moe的pytorch代码
+- Expert Network (专家网络)：通常是前馈神经网络 (FFN)。
+- Gating Network / Router (门控/路由网络)：决定哪些专家被激活以及权重是多少。
+- Top-K Routing (Top-K 路由)：只选择得分最高的 K 个专家。
+- Load Balancing Loss (负载均衡损失)：防止某些专家“累死”而其他专家“闲置”，确保训练稳定
+## Tansformer的pytorch代码
+ss
+## PagedAttention
+PagedAttention 是一种针对Tranformer模型中KVCache管理的优化技术，旨在解决长序列推理时KVCache的内存碎片化和高内存占用问题。通过引入分页机制，将KV Cache分块存储和管理，从而提高内存利用率、支持更长的序列长度，并提升推理服务的吞吐量和稳定性。
+### PagedAttention分页机制
+PagedAttention引入了以下关键概念:
+1. 页面(Page):KV Cache被分割成固定大小的块，每个块存储一定数量的token的K和V
+2. 页面大小:每个页面能容纳的token数量，通常是固定的
+3. 块表(block table):每个序列维护一个块表，记录其KV Cache使用的页面编号(物理块索引)
+4. 所有页面存储在一个全局内存池里，页面可以动态分配和释放，供不同序列复用
+### 工作流程
+假设一个 Transformer 模型有 $L$ 层，$H$ 个注意力头，头维度为 $d$，序列长度为 $T$，PagedAttention 的工作流程如下:
+1. 初始化
+- 创建一个全局页面池，包含多个固定大小的页面，每个页面存储 $N$ 个 token 的 $K$ 和 $V$.
+- 为每个序列分配一个块表，初始为空
+2. 生成新token
+- 当生成新 token 时，计算其 $Q$、$K$、$V$。
+- 检查当前序列的最后一个页面是否已满：
+    - 如果未满，将新 token 的 $K$ 和 $V$ 写入当前页面。
+    - 如果已满，从内存池分配一个新页面，更新块表，将 $K$ 和 $V$ 写入新页面
+- 执行注意力计算
+3. 页面管理
+- 当序列生成结束，释放其占用的页面，归还到内存池。内存池支持动态分配，页面可以被其他序列复用。
+4. 存储结构
+- 页面 page_shape = (batch_size, num_heads, N, head_dim) 每个页面存储$N$个Token的$K$和$V$.
+batch 维度通常在物理存储时被压缩为 1（因为一个物理块同一时间只服务一个序列的逻辑块），即逻辑上是 (B,H,N,D) ，但物理存储往往是(H,N,D) 或 (2,H,N,D) （2代表K和V）。
+- 内存池 形状为 [num_pages,batch,heads,block_size,head_dim]
+5. 内存访问优化
+- 非连续内存访问:通过块表，PagedAttention 可以从非连续的页面中拼接出完整的 KKK 和 VVV。
+- CUDA 内核优化：在 GPU 上，PagedAttention 使用定制的 CUDA 内核，将页面拼接和注意力计算融合，减少内存拷贝开销
+### 实现伪代码
+``` Python
+class PagedAttention:
+    def __init__(self, num_layers, num_heads, head_dim, page_size, max_pages):
+        self.page_size = page_size  # 每个页面存储的 token 数量
+        self.memory_pool = torch.zeros((max_pages, num_layers, num_heads, page_size, head_dim))  # 页面池
+        self.block_tables = {}  # 序列ID到页面编号的映射
+        self.free_pages = list(range(max_pages))  # 可用页面列表
+
+    def allocate_page(self, seq_id):
+        """为序列分配新页面"""
+        if not self.free_pages:
+            raise RuntimeError("No free pages available")
+        page_idx = self.free_pages.pop(0)
+        if seq_id not in self.block_tables:
+            self.block_tables[seq_id] = []
+        self.block_tables[seq_id].append(page_idx)
+        return page_idx
+
+    def update_cache(self, seq_id, layer, K, V):
+        """更新 KV Cache"""
+        if seq_id not in self.block_tables or not self.block_tables[seq_id]:
+            page_idx = self.allocate_page(seq_id)
+        else:
+            page_idx = self.block_tables[seq_id][-1]
+            # 检查当前页面是否已满
+            page_offset = len(self.block_tables[seq_id]) * self.page_size
+            if page_offset >= self.page_size:
+                page_idx = self.allocate_page(seq_id)
+
+        # 写入 K 和 V 到页面
+        self.memory_pool[page_idx, layer, :, page_offset % self.page_size, :] = K
+        self.memory_pool[page_idx, layer, :, page_offset % self.page_size, :] = V
+
+    def get_cache(self, seq_id, layer):
+        """获取序列的 K 和 V"""
+        if seq_id not in self.block_tables:
+            return None, None
+        pages = self.block_tables[seq_id]
+        K_pages = [self.memory_pool[p, layer, :, :, :] for p in pages]
+        V_pages = [self.memory_pool[p, layer, :, :, :] for p in pages]
+        K = torch.cat(K_pages, dim=2)  # 拼接页面
+        V = torch.cat(V_pages, dim=2)
+        return K, V
+
+    def attention(self, Q, K, V, seq_id, layer):
+        """执行注意力计算"""
+        self.update_cache(seq_id, layer, K, V)
+        K_cached, V_cached = self.get_cache(seq_id, layer)
+        scores = torch.matmul(Q, K_cached.transpose(-1, -2)) / sqrt(Q.size(-1))
+        weights = torch.softmax(scores, dim=-1)
+        output = torch.matmul(weights, V_cached)
+        return output
+```
