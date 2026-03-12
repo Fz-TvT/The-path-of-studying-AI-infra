@@ -195,9 +195,112 @@ if __name__ == "__main__":
 **Multi-HeadAttention（MHA）**
 在推理过程中，随着输入文本的不断增多，由于KV cache越存越大的问题，所以出现了MQA
 ![all](picture/mha.png){width=70%}
+
+**手撕代码** 推荐自己写一遍 网站 https://www.deep-ml.com/problems
+```Python
+import numpy as np
+from typing import Tuple
+
+def compute_qkv(X: np.ndarray, W_q: np.ndarray, W_k: np.ndarray, W_v: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute Query, Key, and Value matrices.
+    
+    Args:
+        X: Input matrix of shape (seq_len, d_model)
+        W_q, W_k, W_v: Weight matrices of shape (d_model, d_model)
+    
+    Returns:
+        Q, K, V matrices each of shape (seq_len, d_model)
+    """
+    # Your code here
+    Q=X @ W_q
+    K=X @ W_k
+    V=X @ W_v
+    return Q,K,V
+
+def self_attention(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> np.ndarray:
+    """
+    Compute scaled dot-product self-attention.
+    
+    Args:
+        Q: Query matrix of shape (seq_len, d_k)
+        K: Key matrix of shape (seq_len, d_k)
+        V: Value matrix of shape (seq_len, d_k)
+    
+    Returns:
+        Attention output of shape (seq_len, d_k)
+    """
+    # Your code here
+    d=Q.shape[-1]
+    atten_weights=Q@ K.T/np.sqrt(d)
+    score=np.exp(atten_weights-np.max(atten_weights,axis=-1,keepdims=True))
+    sco=score/np.sum(score,axis=-1,keepdims=True)
+    out=sco@ V
+    return out
+
+def multi_head_attention(Q: np.ndarray, K: np.ndarray, V: np.ndarray, n_heads: int) -> np.ndarray:
+    """
+    Compute multi-head attention.
+    
+    Args:
+        Q, K, V: Matrices of shape (seq_len, d_model)
+        n_heads: Number of attention heads
+    
+    Returns:
+        Attention output of shape (seq_len, d_model)
+    """
+    # Your code here
+    seq_len,d_model=Q.shape
+    d_k=d_model//n_heads
+    Q_heads=Q.reshape(seq_len,n_heads,d_k).transpose(1,0,2)
+    K_heads=K.reshape(seq_len,n_heads,d_k).transpose(1,0,2)
+    V_heads=V.reshape(seq_len,n_heads,d_k).transpose(1,0,2)
+    head_output=[]
+    for i in range(n_heads):
+        head_out=self_attention(Q_heads[i],K_heads[i],V_heads[i])
+        head_output.append(head_out)
+    out=np.concatenate(head_output,axis=-1)
+    return out
+```
 **Multi-QueryAttention（MQA）**
 MQA中每个head的Query共享K和V矩阵，KV cache的内存降低到了$\frac{1}{n}$, 缺点是会导致性能的下降以及模型的不稳定性。
 ![all](picture/mqa.png){width=20%}
+
+**手撕代码:**
+``` Python
+import numpy as np
+
+def multiquery_attention(X: np.ndarray, W_queries: list, W_key: np.ndarray, W_value: np.ndarray, W_out: np.ndarray) -> np.ndarray:
+    """
+    Compute Multi-Query Attention.
+    
+    Args:
+        X: Input array of shape (seq_len, d_model)
+        W_queries: List of query weight matrices, each (d_model, d_k), one per head
+        W_key: Shared key weight matrix of shape (d_model, d_k)
+        W_value: Shared value weight matrix of shape (d_model, d_v)
+        W_out: Output projection matrix of shape (num_heads * d_v, d_model)
+    
+    Returns:
+        Output array of shape (seq_len, d_model), rounded to 4 decimal places
+    """
+    num_heads=len(W_queries)
+    d_k=W_key.shape[-1]
+    K=X@ W_key
+    V=X@ W_value
+    head_outputs=[]
+    for h in range(num_heads):
+        Q_h=X @ W_queries[h]
+        s=Q_h @ K.T/np.sqrt(d_k)
+        exp_s=np.exp(s-np.max(s,axis=-1,keepdims=True))
+        atten_weights=exp_s/np.sum(exp_s,axis=-1,keepdims=True)
+        head_out=atten_weights @ V
+        head_outputs.append(head_out)
+    out=np.concatenate(head_outputs,axis=-1)
+    output=out @ W_out
+    return np.round(output,4)
+```
+
 **Grouped-QueryAttention（GQA）**
 ![all](picture/gqa.png){width=20%}
 
@@ -303,8 +406,10 @@ class PagedAttention:
         output = torch.matmul(weights, V_cached)
         return output
 ```
-# vLLM中  Cuda算子
-## RoPE 
+# vLLM  
+参考了https://www.cnblogs.com/zackstang/p/19036108
+## Cuda算子
+### RoPE 
 <details>
 <summary>RoPE_cuda</summary>
 
@@ -494,7 +599,10 @@ void rotary_embedding(
   });
 }
 ```
-## RMSNorm
+</details>
+
+### RMSNorm
+
 <details>
 <summary>RMSNorm_cuda</summary>
 
@@ -786,3 +894,6 @@ void fused_add_rms_norm(torch::Tensor& input,     // [..., hidden_size]
   }
 }
 ```
+</details>
+
+## vLLM中的作业调度
