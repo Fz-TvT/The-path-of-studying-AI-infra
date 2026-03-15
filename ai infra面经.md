@@ -91,3 +91,117 @@
 - DeepSpeed ZeRO stage1和stage 2的通信量区别，论文和代码实现有没有gap
 - 多GPU通信时NVSHMEM和NVLink的区别
 
+- # 数据并行 (Data Parallelism, DP & DDP)：
+**DDP与DP的区别**
+
+    - DP是单进程多线程的，只能在单机上工作；DDP是多进程的，可以在多级多卡上工作。DP通常比DDP慢，主要原因有：1）DP是单进程的，受到GIL（(Global Interpreter Lock)，同一时刻只能有一个线程执行 Python 字节码 ）的限制；2）DP每个step都需要拷贝模型，以及划分数据和收集输出；
+    - DDP可以与模型并行相结合；
+    - DP的通信成本随着卡数线性增长，DDP支持Ring-AllReduce，通信成本是固定的（T=2(N−1)×S/N/B）
+    
+    
+**PyTorch 中 DDP（distributed data parallel） 的底层实现原理是什么？梯度同步发生在哪一步？如何实现计算与通信的重叠（Overlap）？**
+
+    1. 底层原理可以总结为多进程并发 + 梯度分桶（Bucketing） + 环形全归约（Ring-AllReduce）。
+    底层实现原理：分桶（Bucketing）。DDP 并不是在所有参数梯度计算完后才一次性同步，这样会导致 GPU 在等待通信时大量闲置。
+        - 分桶机制：DDP 在初始化时，将模型的所有参数按照反向传播的逆序（从输出层到输入层）划分为多个桶（Buckets）。
+        - 单位通信：每个桶的大小通常为 25MB。当一个桶内的所有参数都计算出梯度后，该桶就会立即触发通信操作。
+    2. 梯度同步发生在 反向传播（Backward Pass） 过程中。
+    具体来说，DDP 在模型初始化时为每个参数注册了 autograd hook（自动微分钩子）。
+        当 loss.backward() 执行时，算子逐个计算梯度。一旦某个参数的梯度计算完成，对应的钩子函数被触发。钩子函数会将该梯度标记为“Ready”。
+        当同一个桶里的所有梯度都达到 Ready 状态，DDP 就会启动 AllReduce 操作来同步这些梯度。
+        注意： 梯度同步不是在 optimizer.step() 中发生的，optimizer.step() 只负责根据已经同步好的梯度更新参数。
+
+    3. 如何实现计算与通信的重叠（Overlap）？
+    这是 DDP 性能优于 DataParallel (DP) 的关键。其实现依赖于 多流（Multi-stream） 异步执行。
+        异步通信流：PyTorch 会开辟一个专门用于通信的 CUDA Stream。
+        并行执行：计算流（Default Stream）：继续向前计算模型中前面层的梯度（例如从第 n 层往第 1 层算）。通信流（Communication Stream）：同时在后台对已经计算好的第 n+1 层到第 n+m 层的梯度桶进行 AllReduce 同步。
+        结果：理想情况下，通信时间被掩盖在计算时间之内，这种现象被称为 "Communication Hiding"（通信隐藏）
+- # 张量并行
+熟练掌握 Megatron-LM 的 1D 张量并行。MLP 层和 Attention 层分别是如何切分的？前向传播（Forward）和反向传播（Backward）中分别在哪里需要发生 All-Reduce 通信？
+**MLP 层的切分方式**
+
+    MLP 层通常由两个线性层组成：$Y=GeLU(XA)B$。
+        第一个线性层 (Column Parallel): 权重矩阵 A 按列切分。
+            每个 GPU 持有 A 的一部分 Ai​。
+            计算过程：$Y1​=[XA_1​,XA_2​,...,XA_n​]$。
+            结果： 每个 GPU 得到输出的一部分（列切分状态），无需通信即可直接进入 GeLU。
+        第二个线性层 (Row Parallel): 权重矩阵 B 按行切分。
+            每个 GPU 持有 B 的一部分 Bi​。
+            计算过程：$Y=[XA_1​,XA_2​][B_1​B_2​​]=XA_1​B_1​+XA_2​B_2$​。
+            结果： 这是一个部分和 (Partial Sum)。为了得到最终完整的 Y，必须进行一次 All-Reduce。
+**Attention 层的切分方式**
+Attention 的切分逻辑与 MLP 类似，利用了多头注意力（Multi-Head Attention）天然的可并行性。
+
+    Query, Key, Value (Column Parallel):
+        将众多的 Attention Heads 分配到不同的 GPU 上。例如，如果有 16 个头，2 个 GPU，则每个 GPU 负责 8 个头的计算。
+        在计算完Softmax(QK^T)V后，每个 GPU 得到的是自己负责的那部分 Heads 的结果。
+    Linear Projection (Row Parallel):
+        紧接在 Attention 后的线性层按行切分。
+        每个 GPU 将自己计算的 Heads 结果与对应的权重行相乘。
+        结果： 同样产生部分和，需要一次 All-Reduce 汇总所有 Head 的信息。
+**通信发生的时机**
+在 1D 张量并行中，通信的触发具有高度的对称性。
+
+    前向传播 (Forward)
+    在前向传播中，All-Reduce 发生在每个算子组的末尾，用于合并各卡的计算结果：
+        MLP 结束时： 在 Row Parallel 层计算完成后，同步部分和。
+        Attention 结束时： 在最后的线性投射层（Linear Projection）完成后，同步部分和。
+    反向传播 (Backward)
+    由于反向传播是前向传播的伴随运算，根据链式法则，通信操作会“对调”：
+        进入 Row Parallel 层（反向）： 前向是 Row Parallel，反向传播时对应的梯度计算会自动变成 Column Parallel 逻辑。
+        All-Reduce 触发： 在反向传播经过 Column Parallel 层的输入端时（即前向传播的起点），需要进行一次 All-Reduce 来同步输入的梯度（或者在某些实现中使用 f 和 g 算子，通过 All-Gather 或 Reduce-Scatter 来优化）。
+        总结：
+            前向 (Forward): g 算子（All-Reduce）位于输出端。
+            反向 (Backward): f 算子（All-Reduce）位于输入端。
+- # 流水线并行
+**GPipe 与 1F1B 的区别** 
+
+    这是两种不同的调度策略，主要区别在于内存压力和流水线效率。
+    GPipe (Synchronous Pipeline)采用的是“全进全出”策略：
+        流程：先连续进行 M 个 Micro-batches 的前向传播（Forward），全部完成后，再连续进行 M 个微批次的反向传播（Backward）。
+        缺点：内存峰值极高。因为第一个 Micro-batch 的前向激活值必须保留到最后，直到对应的反向传播完成。这导致内存占用随 Micro-batch 的数量线性增加。
+
+    1F1B (One Forward One Backward)是 Megatron-LM 采用的改进策略，旨在解决内存问题：
+        流程：在流水线进入“稳定期”后，每个节点每执行完一个前向任务，就立即执行一个反向任务。
+        优点：显著降低内存占用。一个 Micro-batch 的反向一旦完成，其占用的激活值内存即可立即释放，内存峰值只与流水线深度 p 有关，而与 Micro-batch 数量 m 无关。
+
+**流水线气泡（Bubble）的计算与减少**
+**如何计算气泡时间？**
+
+    假设有P个阶段，总共有m个micro-batches，前方计算时间为Tf，后向计算时间为Tb。流水线气泡时间表示为：
+    T=(P-1)*(Tf+Tb),气泡占总计算时间的比例（假设 tf​≈tb​）约为：Bubble Fraction=(p−1)/m
+**如何减少气泡？**
+
+    增加 Micro-batch 数量 (m)：让 m>>p。当微批次足够多时，首尾的填装/清空时间（气泡）相对于中间的稳定运行时间会变得非常小。
+    交错式流水线 (Interleaved Pipeline)：这是 Megatron-LM 提出的高级技巧。每个 GPU 不再只负责连续的一段层（如 GPU 0 负责 1-4 层），而是交叉负责（如 GPU 0 负责 1-2 层和 9-10 层）。这样可以进一步减小气泡时间，但会增加通信频率。​
+**切分不均匀（Load Imbalance）会导致什么问题？**
+
+    理想情况下，每个 GPU 负责的计算量应该是均等的。如果切分不均匀（例如 GPU 0 负责 10 层，而 GPU 1 只负责 2 层）：
+    木桶效应 (Bottleneck)：整个流水线的步调受限于计算最慢（层数最多）的那个 GPU。
+    气泡急剧扩大：计算快的 GPU 会长时间处于等待状态。在上文公式中，计算时间 tf​ 和 tb​ 将由最慢的 Stage 决定，导致实际利用率远低于理论值。
+    内存不均：负责层数多的 GPU 激活值缓存压力更大，容易导致该节点显存溢出（OOM），而其他 GPU 显存大量闲置。
+
+- # 序列并行
+1. Megatron-LM SP：打破冗余的算子并行
+
+Megatron 的 SP 是对 张量并行（TP） 的一种延伸，主要针对 Transformer 层中原本无法被 TP 切分的算子（如 LayerNorm 和 Dropout）。
+
+    核心原理：
+        在 TP 中，LayerNorm 和 Dropout 是在所有 TP GPU 上冗余计算的（每张卡都存一份完整的序列激活值）。
+        Megatron SP 将序列维度 L 在 TP 组内进行切分。
+        通信机制：利用 Reduce-Scatter 取代原来的 All-Reduce（在前向传播中），在反向传播中使用 All-Gather。
+    解决了什么瓶颈？
+        激活值冗余：它消除了 LayerNorm 和 Dropout 产生的冗余激活值，显著降低了显存占用。
+        计算与通信效率：它并没有引入额外的通信开销，而是将 TP 原有的 All-Reduce 拆分成了两步（Reduce-Scatter + All-Gather），通信量保持不变，但显存更省。
+2. DeepSpeed-Ulysses：全注意力的分布式方案
+
+Ulysses 是为了解决 超长序列 计算而设计的。它的核心是将序列维度切分到不同的 GPU 上，但在计算 Attention 时通过通信“换回”全量信息。
+
+    核心原理：
+        切分：在进入 Attention 计算前，数据按序列维度 L 切分在各卡上。
+        通信 (All-to-All)：在计算 Attention 之前，执行一次 All-to-All 通信。这会将“按序列切分”的数据转换为“按注意力头（Head）切分”的数据。
+        计算：每张卡在本地计算完整的序列长度，但只负责一部分注意力头。
+        通信 (All-to-All)：计算完 Attention 后，再次执行 All-to-All，将数据转回“按序列切分”的状态，以便进行后续的 MLP 计算。
+    解决了什么瓶颈？
+        O(L^2) 复杂度限制：通过这种方式，Attention 的计算被均匀分布到了所有卡上。
+        通信带宽限制：All-to-All 的通信量与 GPU 数量无关，且在现代网络（如 NVLink）中效率极高。它打破了传统 TP 在 Head 数量较少时无法扩展到更多 GPU 的限制。
