@@ -617,3 +617,26 @@ if __name__ == "__main__":
     print(f"Weight Grad Max Diff: {(rms_norm_triton.weight.grad - weight_ref.grad).abs().max().item():.2e}")
     print("Test Passed!" if (x3.grad - grad_ref).abs().max() < 1e-3 else "Test Failed!")
 ```
+</details>
+
+# 针对简历的问题
+- **你的 LRU 换出具体是针对 GPU 显存到 CPU 内存（Swap） 的过程，还是针对 Prefix Caching 的淘汰？如果是 Swap，你是如何处理在换回（Swap-in）时的同步延迟问题的？**
+
+    LRU 是“选牺牲请求做抢占（preempt）”选最久未访问的 Sequence。
+    一旦内存不够，程序调用 preempt，而 preempt直接 deallocate 掉该序列的 block 并放回 waiting 队列。这一步是“释放 GPU KV block”，不是把 KV 拷到 CPU
+- **vLLM中的Prefix Cache 的淘汰逻辑？：**
+监控：调度器实时监控 BlockManager 中的空闲块数量。
+触发：当新请求到达，所需 Block 数 > 当前空闲 Block 数时，触发淘汰。
+筛选：遍历所有 cached blocks。
+排除 ref_count > 0 (正在被活跃请求使用) 的块。根据策略（默认通常是 LRU）排序候选块。
+执行：释放选中的物理 Block，将其加入空闲列表。从哈希索引中移除对应的 (prefix_hash, block_id) 映射。分配：将释放出的 Block 分配给新请求。
+
+- **多级反馈队列（MLFQ）通常用于操作系统处理长短进程。在 LLM 推理场景下，首字延迟（TTFT）和每字输出延迟（TPOT）的权衡是关键。你的调度器是如何定义‘优先级’的？是基于 Prompt 长度，还是基于已经生成的 Token 数量？这种调度在处理Batching（连续批处理）时，如何避免因为频繁切换请求而导致的计算效率下降？**
+
+    不是直接按 Prompt 长度排优先级。nanovllm/engine/scheduler.py:84 的 prefill 阶段按 waiting 队列顺序取请求，主要受 max_num_batched_tokens 和 can_allocate 约束。也不是直接按“已生成 token 总数”排序。decode 阶段的优先级由 MLFQ level 决定，level 变化由“本层已服务步数”控制：nanovllm/engine/scheduler.py:113 到 nanovllm/engine/scheduler.py:117。每次被调度一次 decode，decode_steps_in_level += 1，达到 quantum 就降级。quantum 在 nanovllm/engine/scheduler.py:30，默认是 1,2,4...（见 nanovllm/config.py:19）。有 aging 机制防饥饿。nanovllm/engine/scheduler.py:53 到 nanovllm/engine/scheduler.py:67：等太久会被提升回更高优先级队列。所以优先级实质是“**最近服务历史 + 等待时长**”，而不是 token 长度的静态属性。
+    对 TTFT / TPOT 的影响：TTFT 倾向优先。只要有可接纳的 waiting 请求，schedule() 会先走 prefill 并立即返回（nanovllm/engine/scheduler.py:98）。这会让新请求更快拿到首字。
+
+    TPOT 通过 MLFQ 做折中。长生成请求会逐步降级，避免一直占据高优先级；短/新请求更容易插入，交互体验更好。但代价是老请求单请求 TPOT 可能上升。
+
+    Batching 下如何避免频繁切换导致效率下降“切换”是逻辑调度，不是进程级上下文切换。每个 step 仍是一次 batched forward：LLMEngine.step() 里把 seqs 一起送进 ModelRunner.run()，见 nanovllm/engine/llm_engine.py:41。因此不会出现 OS 那种高昂 context switch 成本。
+    decode 批处理仍尽量做大。在每个 level 中持续 popleft 直到 max_num_seqs，见 nanovllm/engine/scheduler.py:106。这保持了 continuous batching 的规模。内核启动开销被 CUDA Graph 缓解。decode 小步长下，run_model() 使用预捕获 graph（nanovllm/engine/model_runner.py:191 到 nanovllm/engine/model_runner.py:203），减少动态 batch 带来的 launch 开销。目前的一个现实限制。prefill 与 decode 是“二选一”调度周期（有 prefill 就不做 decode），见 nanovllm/engine/scheduler.py:98。这对 TTFT 友好，但在 prefill 压力大时会拉高 decode TPOT。如果要进一步优化，通常会做 chunked prefill 或 prefill/decode 混排，而不是完全互斥。

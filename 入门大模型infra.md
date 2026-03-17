@@ -303,7 +303,38 @@ def multiquery_attention(X: np.ndarray, W_queries: list, W_key: np.ndarray, W_va
 
 **Grouped-QueryAttention（GQA）**
 ![all](picture/gqa.png){width=20%}
-
+``` Python
+def grouped_query_attention(Q, K, V, num_heads, num_kv_heads):
+    """
+    Compute Grouped Query Attention.
+    
+    Args:
+        Q: Query tensor, shape (batch_size, seq_len, num_heads * head_dim)
+        K: Key tensor, shape (batch_size, seq_len, num_kv_heads * head_dim)
+        V: Value tensor, shape (batch_size, seq_len, num_kv_heads * head_dim)
+        num_heads: Number of query heads
+        num_kv_heads: Number of key/value heads
+    
+    Returns:
+        Output tensor, shape (batch_size, seq_len, num_heads * head_dim)
+    """
+    def softmax(x,axis=-1):
+        e_x=np.exp(x-np.max(x,axis=axis,keepdims=True))
+        return e_x/np.sum(e_x,axis=axis,keepdims=True)
+    batch_size,seq_len,q_dim=Q.shape
+    head_dim=q_dim//num_heads
+    num_groups=num_heads//num_kv_heads
+    Q=Q.reshape(batch_size,seq_len,num_heads,head_dim).transpose(0,2,1,3)
+    K=K.reshape(batch_size,seq_len,num_kv_heads,head_dim).transpose(0,2,1,3)
+    V=V.reshape(batch_size,seq_len,num_kv_heads,head_dim).transpose(0,2,1,3)
+    K=np.repeat(K,num_groups,axis=1)
+    V=np.repeat(V,num_groups,axis=1)
+    out=np.matmul(Q,K.transpose(0,1,3,2))/np.sqrt(head_dim)
+    atten_weights=softmax(out,axis=-1)
+    output=np.matmul(atten_weights,V)
+    output=output.transpose(0,2,1,3).reshape(batch_size,seq_len,num_heads*head_dim)
+    return output
+```
 ## Rotary-Embedding
 
 ## 图捕获
