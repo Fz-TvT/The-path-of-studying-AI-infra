@@ -101,7 +101,10 @@ __shared__ float tile[TILE_DIM][TILE_DIM + 1];
 # 数据并行 (Data Parallelism, DP & DDP)：
 **DDP与DP的区别**
 
-    - DP是单进程多线程的，只能在单机上工作；DDP是多进程的，可以在多级多卡上工作。DP通常比DDP慢，主要原因有：1）DP是单进程的，受到GIL（(Global Interpreter Lock)，同一时刻只能有一个线程执行 Python 字节码 ）的限制；2）DP每个step都需要拷贝模型，以及划分数据和收集输出；
+    - DP是单进程多线程的，只能在单机上工作；DDP是多进程的，可以在多级多卡上工作。DP通常比DDP慢，
+    主要原因有：1）DP是单进程的，受到GIL（(Global Interpreter Lock)，同
+    一时刻只能有一个线程执行 Python 字节码 ）的限制；2）DP每个step都需要拷贝模型，
+    以及划分数据和收集输出；
     - DDP可以与模型并行相结合；
     - DP的通信成本随着卡数线性增长，DDP支持Ring-AllReduce，通信成本是固定的（T=2(N−1)×S/N/B）
     
@@ -150,7 +153,11 @@ Attention 的切分逻辑与 MLP 类似，利用了多头注意力（Multi-Head 
 **通信发生的时机**
 在 1D 张量并行中，通信的触发具有高度的对称性。
 ![Tranformer中的Tp](picture/通信.png){width=70%}
-   
+**Megatron-LM 实现的 Transformer 模型为例，在一个标准的 Transformer Layer（一个Block） 中，通常需要进行 2 次 AllReduce 操作**：
+$W_{QKV}$ 按列切分计算得到$W_{O}$，这个过程不需要通信，在各自GPU进行。
+$W_{O}$按行切分进行计算，然后进行一次$AllReduce$ 然后给到MLP (Feed-Forward) 模块 (1 次 AllReduce)
+MLP 通常包含两个线性层:$X\cdot W_1$和 $activation\cdot W_2$，第一层 $W_1$ 按列划分，第二层 $W_2$ 按行划分，这一层计算完成之后需要进行通信一次（(1 次 AllReduce)）。
+
 # 流水线并行
 **GPipe 与 1F1B 的区别** 
 
@@ -664,18 +671,32 @@ $$Memory\approx BatchSize×SeqLen×HiddenSize×(34+\frac{5×NumHeads×SeqLen​}
 
 3. 推理阶段：采用 Autoregressive (自回归) 生成。为了避免重复计算已经生成的 Token，会将每一层的 K 和 V 向量存在显存中，即 KV Cache。
 占用计算：$2×Layers×Heads×HeadDim×SeqLen×BytesPerParam$.
+# 手撕代码
+手撕刷题网站:https://www.deep-ml.com/problems
+手撕MHA、GQA、MQA、sparse MOE top-k routing、softmax、flashattention(先后顺序从大到小)
+
 # 针对简历的问题
+
+
 - **你的 LRU 换出具体是针对 GPU 显存到 CPU 内存（Swap） 的过程，还是针对 Prefix Caching 的淘汰？如果是 Swap，你是如何处理在换回（Swap-in）时的同步延迟问题的？**
 
     LRU 是“选牺牲请求做抢占（preempt）”选最久未访问的 Sequence。
     一旦内存不够，程序调用 preempt，而 preempt直接 deallocate 掉该序列的 block 并放回 waiting 队列。这一步是“释放 GPU KV block”，不是把 KV 拷到 CPU
+
 - **vLLM中的Prefix Cache 的淘汰逻辑？：**
 监控：调度器实时监控 BlockManager 中的空闲块数量。
 触发：当新请求到达，所需 Block 数 > 当前空闲 Block 数时，触发淘汰。
 筛选：遍历所有 cached blocks。
 排除 ref_count > 0 (正在被活跃请求使用) 的块。根据策略（默认通常是 LRU）排序候选块。
 执行：释放选中的物理 Block，将其加入空闲列表。从哈希索引中移除对应的 (prefix_hash, block_id) 映射。分配：将释放出的 Block 分配给新请求。
-
+- **Prefill和decode的区别**
+prefill和decode的区别，哪个更容易造成显存瓶颈：
+首先，Prefill（预填充）和Decode（解码）是大模型推理的两个核心阶段，它们的计算特征截然不同：
+Prefill 阶段是处理用户输入的完整 Prompt。它是一个计算密集型（Compute-Bound）的过程，利用 GPU 的高并行度一次性计算出所有输入 Token 的 KV Cache。它的瓶颈主要在于GPU 算力，直接决定了首字延迟（TTFT）。
+Decode 阶段则是自回归地逐个生成 Token。它是一个典型的显存带宽密集型（Memory-Bound）过程。每生成一个 Token，都需要从显存中读取全部历史的 KV Cache，而计算量极小。这导致 GPU 大部分时间在等待数据搬运，其瓶颈在于显存带宽，直接决定了吐字速度（TPOT）。
+关于哪个更容易造成显存瓶颈，这取决于我们定义的是“容量”还是“带宽”，但通常Decode 阶段是更关键的制约因素：
+从显存容量（Capacity）：Decode 阶段是导致显存溢出（OOM）。因为 KV Cache 随着生成的序列长度线性增长，且需要长期驻留显存。在高并发场景下，多个长序列的累积会迅速耗尽显存，限制了系统的最大并发数（Batch Size）。这也是为什么像 vLLM 的 PageAttention 技术如此重要，它正是为了解决 Decode 阶段的显存碎片化问题，以容纳更多并发请求。
+从显存带宽（Bandwidth）：Decode 阶段是绝对的性能瓶颈。由于算术强度极低，生成速度完全受限于显存读取速度。随着上下文窗口变大，读取开销剧增，导致生成变慢。
 - **多级反馈队列（MLFQ）通常用于操作系统处理长短进程。在 LLM 推理场景下，首字延迟（TTFT）和每字输出延迟（TPOT）的权衡是关键。你的调度器是如何定义‘优先级’的？是基于 Prompt 长度，还是基于已经生成的 Token 数量？这种调度在处理Batching（连续批处理）时，如何避免因为频繁切换请求而导致的计算效率下降？**
 
     不是直接按 Prompt 长度排优先级。nanovllm/engine/scheduler.py:84 的 prefill 阶段按 waiting 队列顺序取请求，主要受 max_num_batched_tokens 和 can_allocate 约束。也不是直接按“已生成 token 总数”排序。decode 阶段的优先级由 MLFQ level 决定，level 变化由“本层已服务步数”控制：nanovllm/engine/scheduler.py:113 到 nanovllm/engine/scheduler.py:117。每次被调度一次 decode，decode_steps_in_level += 1，达到 quantum 就降级。quantum 在 nanovllm/engine/scheduler.py:30，默认是 1,2,4...（见 nanovllm/config.py:19）。有 aging 机制防饥饿。nanovllm/engine/scheduler.py:53 到 nanovllm/engine/scheduler.py:67：等太久会被提升回更高优先级队列。所以优先级实质是“**最近服务历史 + 等待时长**”，而不是 token 长度的静态属性。
@@ -686,3 +707,30 @@ $$Memory\approx BatchSize×SeqLen×HiddenSize×(34+\frac{5×NumHeads×SeqLen​}
     **Batching 下如何避免频繁切换导致效率下降**   
     “切换”是逻辑调度，不是进程级上下文切换。每个 step 仍是一次 batched forward：LLMEngine.step() 里把 seqs 一起送进 ModelRunner.run()。因此不会出现 OS 那种高昂 context switch 成本。
     decode 批处理仍尽量做大。在每个 level 中持续 popleft 直到 max_num_seqs，见 nanovllm/engine/scheduler.py:106。这保持了 continuous batching 的规模。内核启动开销被 CUDA Graph 缓解。decode 小步长下，run_model() 使用预捕获 graph（nanovllm/engine/model_runner.py:191 到 nanovllm/engine/model_runner.py:203），减少动态 batch 带来的 launch 开销。目前的一个现实限制。prefill 与 decode 是“二选一”调度周期（有 prefill 就不做 decode），见 nanovllm/engine/scheduler.py:98。这对 TTFT 友好，但在 prefill 压力大时会拉高 decode TPOT。如果要进一步优化，通常会做 chunked prefill 或 prefill/decode 混排，而不是完全互斥。
+ - **vllm是如何调度的?** :
+**请求到达:** 请求进入等待队列，调度器分析其 Prompt 长度和所需显存块数量。
+**前缀匹配:** 检查 Radix Tree，看是否有可复用的 KV Cache 块（Prefix Caching），减少计算量。
+**资源分配 (PagedAttention):** 查看显存空闲块池。如果有足够块：分配物理块，更新块表，将请求加入运行队列 (Running Queue)。
+如果块不足：触发抢占 (Preemption)，将运行队列中优先级低或耗时长的请求 Swap 到 CPU 内存，腾出空间给新请求。
+**迭代执行 (Continuous Batching):** 在每一步 (Step)，GPU 并行执行运行队列中所有请求的一个 Token 生成。
+**动态调整:** 请求完成后立即释放块；新请求若有资源立即插入；长 Prefill 任务被分块执行以避免阻塞。
+**输出:** 生成的 Token 流式返回给用户。
+ - **vllm的Continuous Batching（持续批处理）和静态批处理?** :
+ 如果 Batch Size 设为 4，系统会等待 4 个请求。即使其中 3 个请求已经生成完毕（遇到了 [EOS] 停止符），它们也必须留在显存里，直到最长的那条序列也跑完。
+ 
+    Continuous Batching（持续批处理）：
+    推理不再是以“整趟任务”为单位，而是以“单个 Token 的生成”为单位。 随到随上：每完成一个 Token 的计算周期，系统就会检查：有没有新请求进来？有没有请求刚写完 [EOS]？即完即走：一旦某个请求生成结束，它的 Slot 会立刻被释放，新的请求可以在下一个 Token 计算周期直接补位，而不需要等待其他请求结束。
+# PD分离
+**什么是pd分离**:
+PD分离是一种针对大模型推理特性的架构优化策略，它将计算密集且高并行的Prefill（预填充）阶段与访存密集且串行的Decode（解码）阶段解耦，部署在不同的资源池或硬件节点上；这种设计不仅消除了两阶段因资源需求不匹配（算力vs显存带宽）导致的相互阻塞和‘木桶效应’，还能通过独立的弹性伸缩和异构硬件搭配（如用高性价比卡做P、大显存卡做D），在显著降低推理成本的同时，最大化系统吞吐量并优化首字延迟。
+
+# Pageattention 简单实现
+``` Python
+
+```
+# Deepseek模型结构
+## DPSK V1
+
+## DPSK V2
+
+## DPSK V3
