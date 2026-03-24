@@ -928,3 +928,41 @@ void fused_add_rms_norm(torch::Tensor& input,     // [..., hidden_size]
 </details>
 
 ## vLLM中的作业调度
+知乎博客 https://zhuanlan.zhihu.com/p/1908153627639551302
+
+https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/sched/scheduler.py
+抢占策略，两种模式
+优先级调
+```Python
+if self.policy == SchedulingPolicy.PRIORITY:
+    # 选择优先级最低、到达时间最早的请求进行抢占
+    preempted_req = max(
+        self.running,
+        key=lambda r: (r.priority, r.arrival_time),  # 优先级高=数值大，到达晚=数值大
+    )
+```
+FCFS模式
+``` Python
+else:  # FCFS
+    preempted_req = self.running.pop()  # 直接弹出最后一个（最近加入的）
+```
+抢占之后的处理
+```Python
+self._preempt_request(preempted_req, timestamp)
+
+def _preempt_request(self, request: Request, timestamp: float) -> None:
+    # 1. 释放 KV Cache
+    self.kv_cache_manager.free(request)
+    # 2. 释放 Encoder Cache
+    self.encoder_cache_manager.free(request)
+    # 3. 重置状态
+    request.status = RequestStatus.PREEMPTED
+    request.num_computed_tokens = 0  # 计算进度清零！
+    if request.spec_token_ids:
+        request.spec_token_ids = []
+    request.num_preemptions += 1  # 抢占计数+1
+    # 4. 放回等待队列头部
+    self.waiting.prepend_request(request)
+```
+**Encoder cache是多模态编码器输出（图像/音频特征）**
+
